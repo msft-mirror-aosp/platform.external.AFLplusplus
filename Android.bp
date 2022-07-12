@@ -58,9 +58,6 @@ cc_defaults {
 cc_binary {
   name: "afl-fuzz",
   host_supported: true,
-  sanitize: {
-    never: true,
-  },
 
   defaults: [
     "afl-defaults",
