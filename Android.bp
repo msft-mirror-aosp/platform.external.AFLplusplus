@@ -92,6 +92,7 @@ cc_binary {
 
 cc_object {
   name: "aflpp_driver",
+  vendor_available: true,
   host_supported: true,
   srcs: [
     "utils/aflpp_driver/aflpp_driver.c",
