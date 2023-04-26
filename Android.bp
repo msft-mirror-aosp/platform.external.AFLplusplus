@@ -1,4 +1,3 @@
-
 package {
     default_applicable_licenses: ["external_AFLplusplus_license"],
 }
@@ -121,6 +120,24 @@ cc_binary {
     "src/afl-performance.c",
   ],
 }
+
+cc_binary {
+  name: "afl-tmin",
+  static_executable: true,
+  host_supported: true,
+
+  defaults: [
+    "afl-defaults",
+  ],
+
+  srcs: [
+    "src/afl-tmin.c",
+    "src/afl-common.c",
+    "src/afl-sharedmem.c",
+    "src/afl-forkserver.c",
+    "src/afl-performance.c",
+  ],
+} 
 
 cc_object {
   name: "aflpp_driver",
