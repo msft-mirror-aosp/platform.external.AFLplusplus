@@ -122,6 +122,24 @@ cc_binary {
 }
 
 cc_binary {
+  name: "afl-gotcpu",
+  static_executable: true,
+  host_supported: true,
+
+  defaults: [
+    "afl-defaults",
+  ],
+
+  srcs: [
+    "src/afl-gotcpu.c",
+    "src/afl-common.c",
+    "src/afl-sharedmem.c",
+    "src/afl-forkserver.c",
+    "src/afl-performance.c",
+  ],
+}
+
+cc_binary {
   name: "afl-tmin",
   static_executable: true,
   host_supported: true,
