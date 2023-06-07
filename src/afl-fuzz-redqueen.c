@@ -11,7 +11,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -28,8 +28,8 @@
 #include "afl-fuzz.h"
 #include "cmplog.h"
 
-//#define _DEBUG
-//#define CMPLOG_INTROSPECTION
+// #define _DEBUG
+// #define CMPLOG_INTROSPECTION
 
 // CMP attribute enum
 enum {
@@ -167,6 +167,25 @@ static u8 get_exec_checksum(afl_state_t *afl, u8 *buf, u32 len, u64 *cksum) {
 
 }
 
+/* replace everything with different values */
+static void random_replace(afl_state_t *afl, u8 *buf, u32 len) {
+
+  for (u32 i = 0; i < len; i++) {
+
+    u8 c;
+
+    do {
+
+      c = rand_below(afl, 256);
+
+    } while (c == buf[i]);
+
+    buf[i] = c;
+
+  }
+
+}
+
 /* replace everything with different values but stay in the same type */
 static void type_replace(afl_state_t *afl, u8 *buf, u32 len) {
 
@@ -266,10 +285,10 @@ static void type_replace(afl_state_t *afl, u8 *buf, u32 len) {
 static u8 colorization(afl_state_t *afl, u8 *buf, u32 len,
                        struct tainted **taints) {
 
-  struct range *  ranges = add_range(NULL, 0, len - 1), *rng;
+  struct range   *ranges = add_range(NULL, 0, len - 1), *rng;
   struct tainted *taint = NULL;
-  u8 *            backup = ck_alloc_nozero(len);
-  u8 *            changed = ck_alloc_nozero(len);
+  u8             *backup = ck_alloc_nozero(len);
+  u8             *changed = ck_alloc_nozero(len);
 
 #if defined(_DEBUG) || defined(CMPLOG_INTROSPECTION)
   u64 start_time = get_cur_time();
@@ -293,7 +312,15 @@ static u8 colorization(afl_state_t *afl, u8 *buf, u32 len,
 
   memcpy(backup, buf, len);
   memcpy(changed, buf, len);
-  type_replace(afl, changed, len);
+  if (afl->cmplog_random_colorization) {
+
+    random_replace(afl, changed, len);
+
+  } else {
+
+    type_replace(afl, changed, len);
+
+  }
 
   while ((rng = pop_biggest_range(&ranges)) != NULL &&
          afl->stage_cur < afl->stage_max) {
@@ -352,7 +379,7 @@ static u8 colorization(afl_state_t *afl, u8 *buf, u32 len,
 
     }
 
-    if (++afl->stage_cur % screen_update == 0) { show_stats(afl); };
+    if (unlikely(++afl->stage_cur % screen_update == 0)) { show_stats(afl); };
 
   }
 
@@ -544,7 +571,7 @@ static u8 its_fuzz(afl_state_t *afl, u8 *buf, u32 len, u8 *status) {
 
 }
 
-//#ifdef CMPLOG_SOLVE_TRANSFORM
+// #ifdef CMPLOG_SOLVE_TRANSFORM
 static int strntoll(const char *str, size_t sz, char **end, int base,
                     long long *out) {
 
@@ -575,7 +602,7 @@ static int strntoull(const char *str, size_t sz, char **end, int base,
 
   char               buf[64];
   unsigned long long ret;
-  const char *       beg = str;
+  const char        *beg = str;
 
   if (!str || !sz) { return 1; }
 
@@ -744,7 +771,7 @@ static void to_base64(u8 *src, u8 *dst, u32 dst_len) {
 
 #endif
 
-//#endif
+// #endif
 
 static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
                               u64 pattern, u64 repl, u64 o_pattern,
@@ -755,15 +782,15 @@ static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
   u64 *buf_64 = (u64 *)&buf[idx];
   u32 *buf_32 = (u32 *)&buf[idx];
   u16 *buf_16 = (u16 *)&buf[idx];
-  u8 * buf_8 = &buf[idx];
+  u8  *buf_8 = &buf[idx];
   u64 *o_buf_64 = (u64 *)&orig_buf[idx];
   u32 *o_buf_32 = (u32 *)&orig_buf[idx];
   u16 *o_buf_16 = (u16 *)&orig_buf[idx];
-  u8 * o_buf_8 = &orig_buf[idx];
+  u8  *o_buf_8 = &orig_buf[idx];
 
   u32 its_len = MIN(len - idx, taint_len);
 
-  if (afl->fsrv.total_execs - last_update > screen_update) {
+  if (unlikely(afl->fsrv.total_execs - last_update > screen_update)) {
 
     show_stats(afl);
     last_update = afl->fsrv.total_execs;
@@ -776,11 +803,11 @@ static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
   //         o_pattern, pattern, repl, changed_val, idx, taint_len,
   //         hshape, attr);
 
-  //#ifdef CMPLOG_SOLVE_TRANSFORM
-  // reverse atoi()/strnu?toll() is expensive, so we only to it in lvl 3
+  // #ifdef CMPLOG_SOLVE_TRANSFORM
+  //  reverse atoi()/strnu?toll() is expensive, so we only to it in lvl 3
   if (afl->cmplog_enable_transform && (lvl & LVL3)) {
 
-    u8 *               endptr;
+    u8                *endptr;
     u8                 use_num = 0, use_unum = 0;
     unsigned long long unum;
     long long          num;
@@ -1008,7 +1035,7 @@ static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
 
         } else {
 
-          diff = 0;
+          o_diff = 0;
 
         }
 
@@ -1093,7 +1120,7 @@ static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
 
   }
 
-  //#endif
+  // #endif
 
   // we only allow this for ascii2integer (above) so leave if this is the case
   if (unlikely(pattern == o_pattern)) { return 0; }
@@ -1248,7 +1275,7 @@ static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
   //       16 = modified float, 32 = modified integer (modified = wont match
   //                                                   in original buffer)
 
-  //#ifdef CMPLOG_SOLVE_ARITHMETIC
+  // #ifdef CMPLOG_SOLVE_ARITHMETIC
   if (!afl->cmplog_enable_arith || lvl < LVL3 || attr == IS_TRANSFORM) {
 
     return 0;
@@ -1413,8 +1440,8 @@ static u8 cmp_extend_encoding(afl_state_t *afl, struct cmp_header *h,
 
   }
 
-  //#endif                                           /*
-  // CMPLOG_SOLVE_ARITHMETIC
+  // #endif                                           /*
+  //  CMPLOG_SOLVE_ARITHMETIC
 
   return 0;
 
@@ -1428,7 +1455,7 @@ static u8 cmp_extend_encodingN(afl_state_t *afl, struct cmp_header *h,
                                u32 taint_len, u8 *orig_buf, u8 *buf, u8 *cbuf,
                                u32 len, u8 do_reverse, u8 lvl, u8 *status) {
 
-  if (afl->fsrv.total_execs - last_update > screen_update) {
+  if (unlikely(afl->fsrv.total_execs - last_update > screen_update)) {
 
     show_stats(afl);
     last_update = afl->fsrv.total_execs;
@@ -1597,6 +1624,8 @@ static void try_to_add_to_dictN(afl_state_t *afl, u128 v, u8 size) {
 
     }
 
+    if (cons_0 > 1 || cons_ff > 1) { return; }
+
   }
 
   maybe_add_auto(afl, (u8 *)&v + off, size);
@@ -1613,7 +1642,7 @@ static u8 cmp_fuzz(afl_state_t *afl, u32 key, u8 *orig_buf, u8 *buf, u8 *cbuf,
                    u32 len, u32 lvl, struct tainted *taint) {
 
   struct cmp_header *h = &afl->shm.cmp_map->headers[key];
-  struct tainted *   t;
+  struct tainted    *t;
   u32                i, j, idx, taint_len, loggeds;
   u32                have_taint = 1;
   u8                 status = 0, found_one = 0;
@@ -1919,11 +1948,11 @@ static u8 rtn_extend_encoding(afl_state_t *afl, u8 entry,
 #ifndef CMPLOG_COMBINE
   (void)(cbuf);
 #endif
-  //#ifndef CMPLOG_SOLVE_TRANSFORM
-  //  (void)(changed_val);
-  //#endif
+  // #ifndef CMPLOG_SOLVE_TRANSFORM
+  //   (void)(changed_val);
+  // #endif
 
-  if (afl->fsrv.total_execs - last_update > screen_update) {
+  if (unlikely(afl->fsrv.total_execs - last_update > screen_update)) {
 
     show_stats(afl);
     last_update = afl->fsrv.total_execs;
@@ -2389,7 +2418,7 @@ static u8 rtn_extend_encoding(afl_state_t *afl, u8 entry,
 
   }
 
-  //#endif
+  // #endif
 
   return 0;
 
@@ -2398,7 +2427,7 @@ static u8 rtn_extend_encoding(afl_state_t *afl, u8 entry,
 static u8 rtn_fuzz(afl_state_t *afl, u32 key, u8 *orig_buf, u8 *buf, u8 *cbuf,
                    u32 len, u8 lvl, struct tainted *taint) {
 
-  struct tainted *   t;
+  struct tainted    *t;
   struct cmp_header *h = &afl->shm.cmp_map->headers[key];
   u32                i, j, idx, have_taint = 1, taint_len, loggeds;
   u8                 status = 0, found_one = 0;
@@ -2789,9 +2818,9 @@ u8 input_to_state_stage(afl_state_t *afl, u8 *orig_buf, u8 *buf, u32 len) {
 
     } else if ((lvl & LVL1)
 
-               //#ifdef CMPLOG_SOLVE_TRANSFORM
+               // #ifdef CMPLOG_SOLVE_TRANSFORM
                || ((lvl & LVL3) && afl->cmplog_enable_transform)
-               //#endif
+               // #endif
     ) {
 
       if (unlikely(rtn_fuzz(afl, k, orig_buf, buf, cbuf, len, lvl, taint))) {

@@ -47,9 +47,9 @@ if [ "$PLATFORM" = "Linux" ] ; then
 } > /dev/null
   echo Settings applied.
   echo
-  dmesg | egrep -q 'nospectre_v2|spectre_v2=off' || {
+  dmesg | grep -E -q 'noibrs pcid nopti' || {
     echo It is recommended to boot the kernel with lots of security off - if you are running a machine that is in a secured network - so set this:
-    echo '  /etc/default/grub:GRUB_CMDLINE_LINUX_DEFAULT="ibpb=off ibrs=off kpti=0 l1tf=off mds=off mitigations=off no_stf_barrier noibpb noibrs nopcid nopti nospec_store_bypass_disable nospectre_v1 nospectre_v2 pcid=off pti=off spec_store_bypass_disable=off spectre_v2=off stf_barrier=off srbds=off noexec=off noexec32=off tsx=on tsx_async_abort=off arm64.nopauth audit=0 hardened_usercopy=off ssbd=force-off"'
+    echo '  /etc/default/grub:GRUB_CMDLINE_LINUX_DEFAULT="ibpb=off ibrs=off kpti=0 l1tf=off mds=off mitigations=off no_stf_barrier noibpb noibrs pcid nopti nospec_store_bypass_disable nospectre_v1 nospectre_v2 pcid=on pti=off spec_store_bypass_disable=off spectre_v2=off stf_barrier=off srbds=off noexec=off noexec32=off tsx=on tsx_async_abort=off arm64.nopauth audit=0 hardened_usercopy=off ssbd=force-off"'
     echo
   }
   echo If you run fuzzing instances in docker, run them with \"--security-opt seccomp=unconfined\" for more speed.
@@ -110,7 +110,7 @@ if [ "$PLATFORM" = "Darwin" ] ; then
   sysctl kern.sysv.shmall=131072000
   echo Settings applied.
   echo
-  if [ $(launchctl list 2>/dev/null | grep -q '\.ReportCrash$') ] ; then
+  if $(launchctl list 2>/dev/null | grep -q '\.ReportCrash$') ; then
     echo
     echo Unloading the default crash reporter
     SL=/System/Library; PL=com.apple.ReportCrash
@@ -118,7 +118,8 @@ if [ "$PLATFORM" = "Darwin" ] ; then
     sudo launchctl unload -w ${SL}/LaunchDaemons/${PL}.Root.plist >/dev/null 2>&1
     echo
   fi
-  echo It is recommended to disable System Integration Protection for increased performance.
+  echo It is recommended to disable System Integrity Protection for increased performance.
+  echo See: https://developer.apple.com/documentation/security/disabling_and_enabling_system_integrity_protection
   echo
   DONE=1
 fi
