@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -446,9 +446,12 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
     ACTF(
         "Fuzzing test case #%u (%u total, %llu crashes saved, "
-        "perf_score=%0.0f, exec_us=%llu, hits=%u, map=%u, ascii=%u)...",
+        "perf_score=%0.0f, weight=%0.0f, favorite=%u, was_fuzzed=%u, "
+        "exec_us=%llu, hits=%u, map=%u, ascii=%u)...",
         afl->current_entry, afl->queued_items, afl->saved_crashes,
-        afl->queue_cur->perf_score, afl->queue_cur->exec_us,
+        afl->queue_cur->perf_score, afl->queue_cur->weight,
+        afl->queue_cur->favored, afl->queue_cur->was_fuzzed,
+        afl->queue_cur->exec_us,
         likely(afl->n_fuzz) ? afl->n_fuzz[afl->queue_cur->n_fuzz_entry] : 0,
         afl->queue_cur->bitmap_size, afl->queue_cur->is_ascii);
     fflush(stdout);
@@ -561,11 +564,11 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
     } else {
 
-      if (afl->cmplog_lvl == 3 ||
-          (afl->cmplog_lvl == 2 && afl->queue_cur->tc_ref) ||
-          afl->queue_cur->favored ||
-          !(afl->fsrv.total_execs % afl->queued_items) ||
-          get_cur_time() - afl->last_find_time > 300000) {  // 300 seconds
+      if (afl->queue_cur->favored || afl->cmplog_lvl == 3 ||
+          (afl->cmplog_lvl == 2 &&
+           (afl->queue_cur->tc_ref ||
+            afl->fsrv.total_execs % afl->queued_items <= 10)) ||
+          get_cur_time() - afl->last_find_time > 250000) {  // 250 seconds
 
         if (input_to_state_stage(afl, in_buf, out_buf, len)) {
 
@@ -584,7 +587,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
      if it has gone through deterministic testing in earlier, resumed runs
      (passed_det). */
 
-  if (likely(afl->queue_cur->passed_det) || likely(afl->skip_deterministic) ||
+  if (likely(afl->skip_deterministic) || likely(afl->queue_cur->passed_det) ||
       likely(perf_score <
              (afl->queue_cur->depth * 30 <= afl->havoc_max_mult * 100
                   ? afl->queue_cur->depth * 30
@@ -743,6 +746,9 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   afl->stage_finds[STAGE_FLIP1] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP1] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Two walking bits. */
 
@@ -775,6 +781,9 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   afl->stage_finds[STAGE_FLIP2] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP2] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Four walking bits. */
 
@@ -811,6 +820,9 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   afl->stage_finds[STAGE_FLIP4] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP4] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Effector map setup. These macros calculate:
 
@@ -830,6 +842,7 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   eff_map = afl_realloc(AFL_BUF_PARAM(eff), EFF_ALEN(len));
   if (unlikely(!eff_map)) { PFATAL("alloc"); }
+  memset(eff_map, 0, EFF_ALEN(len));
   eff_map[0] = 1;
 
   if (EFF_APOS(len - 1) != 0) {
@@ -919,6 +932,9 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   afl->stage_finds[STAGE_FLIP8] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP8] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Two walking bytes. */
 
@@ -962,6 +978,9 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   afl->stage_finds[STAGE_FLIP16] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP16] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   if (len < 4) { goto skip_bitflip; }
 
@@ -1005,6 +1024,9 @@ u8 fuzz_one_original(afl_state_t *afl) {
 
   afl->stage_finds[STAGE_FLIP32] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP32] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_bitflip:
 
@@ -1097,6 +1119,9 @@ skip_bitflip:
 
   afl->stage_finds[STAGE_ARITH8] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_ARITH8] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* 16-bit arithmetics, both endians. */
 
@@ -1227,6 +1252,9 @@ skip_bitflip:
 
   afl->stage_finds[STAGE_ARITH16] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_ARITH16] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* 32-bit arithmetics, both endians. */
 
@@ -1356,6 +1384,9 @@ skip_bitflip:
 
   afl->stage_finds[STAGE_ARITH32] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_ARITH32] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_arith:
 
@@ -1422,6 +1453,9 @@ skip_arith:
 
   afl->stage_finds[STAGE_INTEREST8] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_INTEREST8] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Setting 16-bit integers, both endians. */
 
@@ -1510,6 +1544,9 @@ skip_arith:
 
   afl->stage_finds[STAGE_INTEREST16] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_INTEREST16] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   if (len < 4) { goto skip_interest; }
 
@@ -1599,6 +1636,9 @@ skip_arith:
 
   afl->stage_finds[STAGE_INTEREST32] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_INTEREST32] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_interest:
 
@@ -1672,6 +1712,9 @@ skip_interest:
 
   afl->stage_finds[STAGE_EXTRAS_UO] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_UO] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Insertion of user-supplied extras. */
 
@@ -1728,6 +1771,9 @@ skip_interest:
 
   afl->stage_finds[STAGE_EXTRAS_UI] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_UI] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_user_extras:
 
@@ -1786,6 +1832,9 @@ skip_user_extras:
 
   afl->stage_finds[STAGE_EXTRAS_AO] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_AO] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Insertion of auto extras. */
 
@@ -1842,6 +1891,9 @@ skip_user_extras:
 
   afl->stage_finds[STAGE_EXTRAS_AI] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_AI] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_extras:
 
@@ -1860,9 +1912,11 @@ custom_mutator_stage:
 
   afl->stage_name = "custom mutator";
   afl->stage_short = "custom";
-  afl->stage_max = HAVOC_CYCLES * perf_score / afl->havoc_div / 100;
+  afl->stage_cur = 0;
   afl->stage_val_type = STAGE_VAL_NONE;
   bool has_custom_fuzz = false;
+  u32  shift = unlikely(afl->custom_only) ? 7 : 8;
+  afl->stage_max = (HAVOC_CYCLES * perf_score / afl->havoc_div) >> shift;
 
   if (afl->stage_max < HAVOC_MIN) { afl->stage_max = HAVOC_MIN; }
 
@@ -1879,6 +1933,7 @@ custom_mutator_stage:
     if (el->afl_custom_fuzz) {
 
       afl->current_custom_fuzz = el;
+      afl->stage_name = el->name_short;
 
       if (el->afl_custom_fuzz_count) {
 
@@ -1901,11 +1956,12 @@ custom_mutator_stage:
 
           struct queue_entry *target = NULL;
           u32                 tid;
-          u8 *                new_buf = NULL;
+          u8                 *new_buf = NULL;
           u32                 target_len = 0;
 
           /* check if splicing makes sense yet (enough entries) */
-          if (likely(afl->ready_for_splicing_count > 1)) {
+          if (likely(!afl->custom_splice_optout &&
+                     afl->ready_for_splicing_count > 1)) {
 
             /* Pick a random other queue entry for passing to external API
                that has the necessary length */
@@ -1935,7 +1991,8 @@ custom_mutator_stage:
 
           if (unlikely(!mutated_buf)) {
 
-            FATAL("Error in custom_fuzz. Size returned: %zu", mutated_size);
+            // FATAL("Error in custom_fuzz. Size returned: %zu", mutated_size);
+            break;
 
           }
 
@@ -1987,21 +2044,26 @@ custom_mutator_stage:
   new_hit_cnt = afl->queued_items + afl->saved_crashes;
 
   afl->stage_finds[STAGE_CUSTOM_MUTATOR] += new_hit_cnt - orig_hit_cnt;
-  afl->stage_cycles[STAGE_CUSTOM_MUTATOR] += afl->stage_max;
-
-  if (likely(afl->custom_only)) {
-
-    /* Skip other stages */
-    ret_val = 0;
-    goto abandon_entry;
-
-  }
+  afl->stage_cycles[STAGE_CUSTOM_MUTATOR] += afl->stage_cur;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /****************
    * RANDOM HAVOC *
    ****************/
 
 havoc_stage:
+
+  if (unlikely(afl->custom_only)) {
+
+    /* Force UI update */
+    show_stats(afl);
+    /* Skip other stages */
+    ret_val = 0;
+    goto abandon_entry;
+
+  }
 
   afl->stage_cur_byte = -1;
 
@@ -2012,8 +2074,9 @@ havoc_stage:
 
     afl->stage_name = "havoc";
     afl->stage_short = "havoc";
-    afl->stage_max = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
-                     perf_score / afl->havoc_div / 100;
+    afl->stage_max = ((doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
+                      perf_score / afl->havoc_div) >>
+                     8;
 
   } else {
 
@@ -2022,11 +2085,11 @@ havoc_stage:
     snprintf(afl->stage_name_buf, STAGE_BUF_SIZE, "splice %u", splice_cycle);
     afl->stage_name = afl->stage_name_buf;
     afl->stage_short = "splice";
-    afl->stage_max = SPLICE_HAVOC * perf_score / afl->havoc_div / 100;
+    afl->stage_max = (SPLICE_HAVOC * perf_score / afl->havoc_div) >> 8;
 
   }
 
-  if (afl->stage_max < HAVOC_MIN) { afl->stage_max = HAVOC_MIN; }
+  if (unlikely(afl->stage_max < HAVOC_MIN)) { afl->stage_max = HAVOC_MIN; }
 
   temp_len = len;
 
@@ -2110,7 +2173,7 @@ havoc_stage:
           if (el->stacked_custom &&
               rand_below(afl, 100) < el->stacked_custom_prob) {
 
-            u8 *   custom_havoc_buf = NULL;
+            u8    *custom_havoc_buf = NULL;
             size_t new_len = el->afl_custom_havoc_mutation(
                 el->data, out_buf, temp_len, &custom_havoc_buf, MAX_FILE);
             if (unlikely(!custom_havoc_buf)) {
@@ -2585,7 +2648,7 @@ havoc_stage:
           snprintf(afl->m_tmp, sizeof(afl->m_tmp), " SUBBYTE_");
           strcat(afl->mutation, afl->m_tmp);
 #endif
-          out_buf[rand_below(afl, temp_len)]++;
+          out_buf[rand_below(afl, temp_len)]--;
           break;
 
         }
@@ -2823,7 +2886,7 @@ havoc_stage:
           /* Get the testcase for splicing. */
           struct queue_entry *target = afl->queue_buf[tid];
           u32                 new_len = target->len;
-          u8 *                new_buf = queue_testcase_get(afl, target);
+          u8                 *new_buf = queue_testcase_get(afl, target);
 
           if ((temp_len >= 2 && r % 2) || temp_len + HAVOC_BLK_XL >= MAX_FILE) {
 
@@ -2925,11 +2988,17 @@ havoc_stage:
 
     afl->stage_finds[STAGE_HAVOC] += new_hit_cnt - orig_hit_cnt;
     afl->stage_cycles[STAGE_HAVOC] += afl->stage_max;
+#ifdef INTROSPECTION
+    afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   } else {
 
     afl->stage_finds[STAGE_SPLICE] += new_hit_cnt - orig_hit_cnt;
     afl->stage_cycles[STAGE_SPLICE] += afl->stage_max;
+#ifdef INTROSPECTION
+    afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   }
 
@@ -2951,7 +3020,7 @@ retry_splicing:
 
     struct queue_entry *target;
     u32                 tid, split_at;
-    u8 *                new_buf;
+    u8                 *new_buf;
     s32                 f_diff, l_diff;
 
     /* First of all, if we've modified in_buf for havoc, let's clean that
@@ -3411,6 +3480,9 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   afl->stage_finds[STAGE_FLIP1] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP1] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Two walking bits. */
 
@@ -3442,6 +3514,9 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   afl->stage_finds[STAGE_FLIP2] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP2] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Four walking bits. */
 
@@ -3477,6 +3552,9 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   afl->stage_finds[STAGE_FLIP4] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP4] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Effector map setup. These macros calculate:
 
@@ -3496,6 +3574,7 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   eff_map = afl_realloc(AFL_BUF_PARAM(eff), EFF_ALEN(len));
   if (unlikely(!eff_map)) { PFATAL("alloc"); }
+  memset(eff_map, 0, EFF_ALEN(len));
   eff_map[0] = 1;
 
   if (EFF_APOS(len - 1) != 0) {
@@ -3584,6 +3663,9 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   afl->stage_finds[STAGE_FLIP8] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP8] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Two walking bytes. */
 
@@ -3626,6 +3708,9 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   afl->stage_finds[STAGE_FLIP16] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP16] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   if (len < 4) { goto skip_bitflip; }
 
@@ -3668,6 +3753,9 @@ static u8 mopt_common_fuzzing(afl_state_t *afl, MOpt_globals_t MOpt_globals) {
 
   afl->stage_finds[STAGE_FLIP32] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_FLIP32] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_bitflip:
 
@@ -3758,6 +3846,9 @@ skip_bitflip:
 
   afl->stage_finds[STAGE_ARITH8] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_ARITH8] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* 16-bit arithmetics, both endians. */
 
@@ -3884,6 +3975,9 @@ skip_bitflip:
 
   afl->stage_finds[STAGE_ARITH16] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_ARITH16] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* 32-bit arithmetics, both endians. */
 
@@ -4009,6 +4103,9 @@ skip_bitflip:
 
   afl->stage_finds[STAGE_ARITH32] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_ARITH32] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_arith:
 
@@ -4074,6 +4171,9 @@ skip_arith:
 
   afl->stage_finds[STAGE_INTEREST8] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_INTEREST8] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Setting 16-bit integers, both endians. */
 
@@ -4160,6 +4260,9 @@ skip_arith:
 
   afl->stage_finds[STAGE_INTEREST16] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_INTEREST16] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   if (len < 4) { goto skip_interest; }
 
@@ -4247,6 +4350,9 @@ skip_arith:
 
   afl->stage_finds[STAGE_INTEREST32] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_INTEREST32] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_interest:
 
@@ -4320,6 +4426,9 @@ skip_interest:
 
   afl->stage_finds[STAGE_EXTRAS_UO] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_UO] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Insertion of user-supplied extras. */
 
@@ -4376,6 +4485,9 @@ skip_interest:
 
   afl->stage_finds[STAGE_EXTRAS_UI] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_UI] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_user_extras:
 
@@ -4435,6 +4547,9 @@ skip_user_extras:
 
   afl->stage_finds[STAGE_EXTRAS_AO] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_AO] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
   /* Insertion of auto extras. */
 
@@ -4491,6 +4606,9 @@ skip_user_extras:
 
   afl->stage_finds[STAGE_EXTRAS_AI] += new_hit_cnt - orig_hit_cnt;
   afl->stage_cycles[STAGE_EXTRAS_AI] += afl->stage_max;
+#ifdef INTROSPECTION
+  afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
 skip_extras:
 
@@ -4516,8 +4634,9 @@ pacemaker_fuzzing:
 
     afl->stage_name = MOpt_globals.havoc_stagename;
     afl->stage_short = MOpt_globals.havoc_stagenameshort;
-    afl->stage_max = (doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
-                     perf_score / afl->havoc_div / 100;
+    afl->stage_max = ((doing_det ? HAVOC_CYCLES_INIT : HAVOC_CYCLES) *
+                      perf_score / afl->havoc_div) >>
+                     7;
 
   } else {
 
@@ -4527,7 +4646,7 @@ pacemaker_fuzzing:
              MOpt_globals.splice_stageformat, splice_cycle);
     afl->stage_name = afl->stage_name_buf;
     afl->stage_short = MOpt_globals.splice_stagenameshort;
-    afl->stage_max = SPLICE_HAVOC * perf_score / afl->havoc_div / 100;
+    afl->stage_max = (SPLICE_HAVOC * perf_score / afl->havoc_div) >> 8;
 
   }
 
@@ -5164,7 +5283,7 @@ pacemaker_fuzzing:
                 /* Get the testcase for splicing. */
                 struct queue_entry *target = afl->queue_buf[tid];
                 u32                 new_len = target->len;
-                u8 *                new_buf = queue_testcase_get(afl, target);
+                u8                 *new_buf = queue_testcase_get(afl, target);
 
                 if ((temp_len >= 2 && rand_below(afl, 2)) ||
                     temp_len + HAVOC_BLK_XL >= MAX_FILE) {
@@ -5316,11 +5435,17 @@ pacemaker_fuzzing:
 
           afl->stage_finds[STAGE_HAVOC] += new_hit_cnt - orig_hit_cnt;
           afl->stage_cycles[STAGE_HAVOC] += afl->stage_max;
+#ifdef INTROSPECTION
+          afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
         } else {
 
           afl->stage_finds[STAGE_SPLICE] += new_hit_cnt - orig_hit_cnt;
           afl->stage_cycles[STAGE_SPLICE] += afl->stage_max;
+#ifdef INTROSPECTION
+          afl->queue_cur->stats_mutated += afl->stage_max;
+#endif
 
         }
 
@@ -5340,7 +5465,7 @@ pacemaker_fuzzing:
 
         struct queue_entry *target;
         u32                 tid, split_at;
-        u8 *                new_buf;
+        u8                 *new_buf;
         s32                 f_diff, l_diff;
 
         /* First of all, if we've modified in_buf for havoc, let's clean that
@@ -5572,6 +5697,7 @@ pacemaker_fuzzing:
 
   }                                                                /* block */
 
+  ++afl->queue_cur->fuzz_level;
   return ret_val;
 
 }
@@ -5681,13 +5807,11 @@ void pso_updating(afl_state_t *afl) {
 
 }
 
-/* larger change for MOpt implementation: the original fuzz_one was renamed
-   to fuzz_one_original. All documentation references to fuzz_one therefore
-   mean fuzz_one_original */
-
+/* The entry point for the mutator, choosing the default mutator, and/or MOpt
+   depending on the configuration. */
 u8 fuzz_one(afl_state_t *afl) {
 
-  int key_val_lv_1 = 0, key_val_lv_2 = 0;
+  int key_val_lv_1 = -1, key_val_lv_2 = -1;
 
 #ifdef _AFL_DOCUMENT_MUTATIONS
 
@@ -5707,7 +5831,12 @@ u8 fuzz_one(afl_state_t *afl) {
 
 #endif
 
-  // if limit_time_sig == -1 then both are run after each other
+  /*
+     -L command line paramter => limit_time_sig value
+       limit_time_sig == 0 then run the default mutator
+       limit_time_sig  > 0 then run MOpt
+       limit_time_sig  < 0 both are run
+  */
 
   if (afl->limit_time_sig <= 0) { key_val_lv_1 = fuzz_one_original(afl); }
 
@@ -5728,6 +5857,9 @@ u8 fuzz_one(afl_state_t *afl) {
     }
 
   }
+
+  if (unlikely(key_val_lv_1 == -1)) { key_val_lv_1 = 0; }
+  if (likely(key_val_lv_2 == -1)) { key_val_lv_2 = 0; }
 
   return (key_val_lv_1 | key_val_lv_2);
 

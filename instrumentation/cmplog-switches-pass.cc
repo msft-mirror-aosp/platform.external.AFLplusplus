@@ -5,7 +5,7 @@
    Written by Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2015, 2016 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -39,7 +39,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#if LLVM_VERSION_MAJOR < 17
+  #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#endif
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -149,9 +151,9 @@ Iterator Unique(Iterator first, Iterator last) {
 bool CmplogSwitches::hookInstrs(Module &M) {
 
   std::vector<SwitchInst *> switches;
-  LLVMContext &             C = M.getContext();
+  LLVMContext              &C = M.getContext();
 
-  Type *       VoidTy = Type::getVoidTy(C);
+  Type        *VoidTy = Type::getVoidTy(C);
   IntegerType *Int8Ty = IntegerType::getInt8Ty(C);
   IntegerType *Int16Ty = IntegerType::getInt16Ty(C);
   IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
@@ -270,7 +272,7 @@ bool CmplogSwitches::hookInstrs(Module &M) {
 
     for (auto &SI : switches) {
 
-      Value *       Val = SI->getCondition();
+      Value        *Val = SI->getCondition();
       unsigned int  max_size = Val->getType()->getIntegerBitWidth(), cast_size;
       unsigned char do_cast = 0;
 
