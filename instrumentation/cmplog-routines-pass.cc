@@ -5,7 +5,7 @@
    Written by Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2015, 2016 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -38,7 +38,9 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#if LLVM_VERSION_MAJOR < 17
+  #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#endif
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Pass.h"
 #include "llvm/Analysis/ValueTracking.h"
@@ -506,8 +508,8 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
     args.push_back(v1Pcasted);
     args.push_back(v2Pcasted);
 
@@ -537,9 +539,9 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
-    Value *              v3Pbitcast = IRB.CreateBitCast(
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v3Pbitcast = IRB.CreateBitCast(
         v3P, IntegerType::get(C, v3P->getType()->getPrimitiveSizeInBits()));
     Value *v3Pcasted =
         IRB.CreateIntCast(v3Pbitcast, IntegerType::get(C, 64), false);
@@ -572,8 +574,8 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
     args.push_back(v1Pcasted);
     args.push_back(v2Pcasted);
 
@@ -603,9 +605,9 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
-    Value *              v3Pbitcast = IRB.CreateBitCast(
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v3Pbitcast = IRB.CreateBitCast(
         v3P, IntegerType::get(C, v3P->getType()->getPrimitiveSizeInBits()));
     Value *v3Pcasted =
         IRB.CreateIntCast(v3Pbitcast, IntegerType::get(C, 64), false);
@@ -638,8 +640,8 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
     args.push_back(v1Pcasted);
     args.push_back(v2Pcasted);
 
@@ -668,8 +670,8 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
     args.push_back(v1Pcasted);
     args.push_back(v2Pcasted);
 
@@ -698,8 +700,8 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
     args.push_back(v1Pcasted);
     args.push_back(v2Pcasted);
 
@@ -728,8 +730,8 @@ bool CmpLogRoutines::hookRtns(Module &M) {
     IRBuilder<> IRB(ThenTerm);
 
     std::vector<Value *> args;
-    Value *              v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
-    Value *              v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
+    Value               *v1Pcasted = IRB.CreatePointerCast(v1P, i8PtrTy);
+    Value               *v2Pcasted = IRB.CreatePointerCast(v2P, i8PtrTy);
     args.push_back(v1Pcasted);
     args.push_back(v2Pcasted);
 

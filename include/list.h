@@ -10,7 +10,7 @@
                      Dominik Maier <mail@dmnk.co>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -43,7 +43,7 @@ typedef struct list_element {
 
   struct list_element *prev;
   struct list_element *next;
-  void *               data;
+  void                *data;
 
 } element_t;
 
@@ -102,7 +102,7 @@ static inline void list_append(list_t *list, void *el) {
 #define LIST_FOREACH(list, type, block)                            \
   do {                                                             \
                                                                    \
-    list_t *   li = (list);                                        \
+    list_t    *li = (list);                                        \
     element_t *head = get_head((li));                              \
     element_t *el_box = (head)->next;                              \
     if (!el_box) FATAL("foreach over uninitialized list");         \
