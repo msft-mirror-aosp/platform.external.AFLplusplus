@@ -41,7 +41,6 @@ cc_defaults {
     "instrumentation",
   ],
   cflags: [
-    "-flto=full",
     "-funroll-loops",
     "-Wno-pointer-sign",
     "-Wno-pointer-arith",
