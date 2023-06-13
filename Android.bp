@@ -118,6 +118,8 @@ cc_binary {
     "src/afl-sharedmem.c",
     "src/afl-forkserver.c",
     "src/afl-performance.c",
+    "src/afl-fuzz-mutators.c",
+    "src/afl-fuzz-python.c",
   ],
 }
 

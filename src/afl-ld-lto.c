@@ -2,14 +2,14 @@
   american fuzzy lop++ - wrapper for llvm 11+ lld
   -----------------------------------------------
 
-  Written by Marc Heuse <mh@mh-sec.de> for afl++
+  Written by Marc Heuse <mh@mh-sec.de> for AFL++
 
   Maintained by Marc Heuse <mh@mh-sec.de>,
                 Heiko Eißfeldt <heiko.eissfeldt@hexco.de>
                 Andrea Fioraldi <andreafioraldi@gmail.com>
                 Dominik Maier <domenukk@gmail.com>
 
-  Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+  Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
   Licensed under the Apache License, Version 2.0 (the "License");
   you may not use this file except in compliance with the License.
@@ -210,7 +210,7 @@ static void edit_params(int argc, char **argv) {
 
     if (strcmp(argv[i], "--afl") == 0) {
 
-      if (!be_quiet) OKF("afl++ test command line flag detected, exiting.");
+      if (!be_quiet) OKF("AFL++ test command line flag detected, exiting.");
       exit(0);
 
     }

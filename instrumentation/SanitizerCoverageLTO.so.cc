@@ -1,4 +1,4 @@
-/* SanitizeCoverage.cpp ported to afl++ LTO :-) */
+/* SanitizeCoverage.cpp ported to AFL++ LTO :-) */
 
 #define AFL_LLVM_PASS
 
@@ -17,8 +17,12 @@
 #include "llvm/Transforms/Instrumentation/SanitizerCoverage.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
-#include "llvm/ADT/Triple.h"
-#include "llvm/Analysis/EHPersonalities.h"
+#if LLVM_VERSION_MAJOR < 17
+  #include "llvm/ADT/Triple.h"
+  #include "llvm/Analysis/EHPersonalities.h"
+#else
+  #include "llvm/IR/EHPersonalities.h"
+#endif
 #include "llvm/Analysis/PostDominators.h"
 #include "llvm/Analysis/ValueTracking.h"
 #include "llvm/IR/BasicBlock.h"
@@ -47,7 +51,9 @@
 #include "llvm/Support/VirtualFileSystem.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Transforms/Instrumentation.h"
-#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#if LLVM_VERSION_MAJOR < 17
+  #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#endif
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 #include "llvm/Transforms/Utils/ModuleUtils.h"
@@ -110,6 +116,12 @@ static cl::opt<bool> ClPruneBlocks(
     "lto-coverage-prune-blocks",
     cl::desc("Reduce the number of instrumented blocks"), cl::Hidden,
     cl::init(true));
+
+namespace llvm {
+
+void initializeModuleSanitizerCoverageLTOLegacyPassPass(PassRegistry &PB);
+
+}
 
 namespace {
 
@@ -182,7 +194,7 @@ class ModuleSanitizerCoverageLTO
  private:
   void            instrumentFunction(Function &F, DomTreeCallback DTCallback,
                                      PostDomTreeCallback PDTCallback);
-  void            InjectCoverageForIndirectCalls(Function &              F,
+  void            InjectCoverageForIndirectCalls(Function               &F,
                                                  ArrayRef<Instruction *> IndirCalls);
   bool            InjectCoverage(Function &F, ArrayRef<BasicBlock *> AllBlocks,
                                  bool IsLeafFunc = true);
@@ -211,10 +223,10 @@ class ModuleSanitizerCoverageLTO
   FunctionCallee SanCovTracePC /*, SanCovTracePCGuard*/;
   Type *IntptrTy, *IntptrPtrTy, *Int64Ty, *Int64PtrTy, *Int32Ty, *Int32PtrTy,
       *Int16Ty, *Int8Ty, *Int8PtrTy, *Int1Ty, *Int1PtrTy;
-  Module *          CurModule;
+  Module           *CurModule;
   std::string       CurModuleUniqueId;
   Triple            TargetTriple;
-  LLVMContext *     C;
+  LLVMContext      *C;
   const DataLayout *DL;
 
   GlobalVariable *FunctionGuardArray;        // for trace-pc-guard.
@@ -226,42 +238,43 @@ class ModuleSanitizerCoverageLTO
 
   SanitizerCoverageOptions Options;
 
-  // afl++ START
+  // AFL++ START
   // const SpecialCaseList *          Allowlist;
   // const SpecialCaseList *          Blocklist;
   uint32_t                         autodictionary = 1;
+  uint32_t                         autodictionary_no_main = 0;
   uint32_t                         inst = 0;
   uint32_t                         afl_global_id = 0;
   uint32_t                         unhandled = 0;
   uint32_t                         select_cnt = 0;
   uint64_t                         map_addr = 0;
-  const char *                     skip_nozero = NULL;
-  const char *                     use_threadsafe_counters = nullptr;
+  const char                      *skip_nozero = NULL;
+  const char                      *use_threadsafe_counters = nullptr;
   std::vector<BasicBlock *>        BlockList;
   DenseMap<Value *, std::string *> valueMap;
   std::vector<std::string>         dictionary;
-  IntegerType *                    Int8Tyi = NULL;
-  IntegerType *                    Int32Tyi = NULL;
-  IntegerType *                    Int64Tyi = NULL;
-  ConstantInt *                    Zero = NULL;
-  ConstantInt *                    One = NULL;
-  LLVMContext *                    Ct = NULL;
-  Module *                         Mo = NULL;
-  GlobalVariable *                 AFLMapPtr = NULL;
-  Value *                          MapPtrFixed = NULL;
+  IntegerType                     *Int8Tyi = NULL;
+  IntegerType                     *Int32Tyi = NULL;
+  IntegerType                     *Int64Tyi = NULL;
+  ConstantInt                     *Zero = NULL;
+  ConstantInt                     *One = NULL;
+  LLVMContext                     *Ct = NULL;
+  Module                          *Mo = NULL;
+  GlobalVariable                  *AFLMapPtr = NULL;
+  Value                           *MapPtrFixed = NULL;
   std::ofstream                    dFile;
   size_t                           found = 0;
-  // afl++ END
+  // AFL++ END
 
 };
 
-class ModuleSanitizerCoverageLegacyPass : public ModulePass {
+class ModuleSanitizerCoverageLTOLegacyPass : public ModulePass {
 
  public:
   static char ID;
   StringRef   getPassName() const override {
 
-    return "sancov";
+    return "sancov-lto";
 
   }
 
@@ -272,11 +285,11 @@ class ModuleSanitizerCoverageLegacyPass : public ModulePass {
 
   }
 
-  ModuleSanitizerCoverageLegacyPass(
+  ModuleSanitizerCoverageLTOLegacyPass(
       const SanitizerCoverageOptions &Options = SanitizerCoverageOptions())
       : ModulePass(ID), Options(Options) {
 
-    initializeModuleSanitizerCoverageLegacyPassPass(
+    initializeModuleSanitizerCoverageLTOLegacyPassPass(
         *PassRegistry::getPassRegistry());
 
   }
@@ -318,8 +331,11 @@ llvmGetPassPluginInfo() {
 #if LLVM_VERSION_MAJOR <= 13
             using OptimizationLevel = typename PassBuilder::OptimizationLevel;
 #endif
-            //            PB.registerFullLinkTimeOptimizationLastEPCallback(
+#if LLVM_VERSION_MAJOR >= 16
+            PB.registerFullLinkTimeOptimizationLastEPCallback(
+#else
             PB.registerOptimizerLastEPCallback(
+#endif
                 [](ModulePassManager &MPM, OptimizationLevel OL) {
 
                   MPM.addPass(ModuleSanitizerCoverageLTO());
@@ -330,12 +346,12 @@ llvmGetPassPluginInfo() {
 
 }
 
-PreservedAnalyses ModuleSanitizerCoverageLTO::run(Module &               M,
+PreservedAnalyses ModuleSanitizerCoverageLTO::run(Module                &M,
                                                   ModuleAnalysisManager &MAM) {
 
   ModuleSanitizerCoverageLTO ModuleSancov(Options);
   auto &FAM = MAM.getResult<FunctionAnalysisManagerModuleProxy>(M).getManager();
-  auto  DTCallback = [&FAM](Function &F) -> const DominatorTree * {
+  auto  DTCallback = [&FAM](Function &F) -> const DominatorTree  *{
 
     return &FAM.getResult<DominatorTreeAnalysis>(F);
 
@@ -380,7 +396,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
   FunctionPCsArray = nullptr;
   IntptrTy = Type::getIntNTy(*C, DL->getPointerSizeInBits());
   IntptrPtrTy = PointerType::getUnqual(IntptrTy);
-  Type *      VoidTy = Type::getVoidTy(*C);
+  Type       *VoidTy = Type::getVoidTy(*C);
   IRBuilder<> IRB(*C);
   Int64PtrTy = PointerType::getUnqual(IRB.getInt64Ty());
   Int32PtrTy = PointerType::getUnqual(IRB.getInt32Ty());
@@ -392,8 +408,8 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
   Int8Ty = IRB.getInt8Ty();
   Int1Ty = IRB.getInt1Ty();
 
-  /* afl++ START */
-  char *       ptr;
+  /* AFL++ START */
+  char        *ptr;
   LLVMContext &Ctx = M.getContext();
   Ct = &Ctx;
   Int8Tyi = IntegerType::getInt8Ty(Ctx);
@@ -402,7 +418,8 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
 
   /* Show a banner */
   setvbuf(stdout, NULL, _IONBF, 0);
-  if (getenv("AFL_DEBUG")) debug = 1;
+  if (getenv("AFL_DEBUG")) { debug = 1; }
+  if (getenv("AFL_LLVM_DICT2FILE_NO_MAIN")) { autodictionary_no_main = 1; }
 
   if ((isatty(2) && !getenv("AFL_QUIET")) || debug) {
 
@@ -419,6 +436,8 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
   if ((ptr = getenv("AFL_LLVM_LTO_STARTID")) != NULL)
     if ((afl_global_id = atoi(ptr)) < 0)
       FATAL("AFL_LLVM_LTO_STARTID value of \"%s\" is negative\n", ptr);
+
+  if (afl_global_id < 4) { afl_global_id = 4; }
 
   if ((ptr = getenv("AFL_LLVM_DOCUMENT_IDS")) != NULL) {
 
@@ -494,16 +513,23 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
 
       if (!isInInstrumentList(&F, MNAME) || !F.size()) { continue; }
 
+      if (autodictionary_no_main &&
+          (!F.getName().compare("main") || !F.getName().compare("_main"))) {
+
+        continue;
+
+      }
+
       for (auto &BB : F) {
 
         for (auto &IN : BB) {
 
           CallInst *callInst = nullptr;
-          CmpInst * cmpInst = nullptr;
+          CmpInst  *cmpInst = nullptr;
 
           if ((cmpInst = dyn_cast<CmpInst>(&IN))) {
 
-            Value *      op = cmpInst->getOperand(1);
+            Value       *op = cmpInst->getOperand(1);
             ConstantInt *ilen = dyn_cast<ConstantInt>(op);
 
             if (ilen && ilen->uge(0xffffffffffffffff) == false) {
@@ -759,7 +785,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
 
               if (HasStr2 == true) {
 
-                Value *      op2 = callInst->getArgOperand(2);
+                Value       *op2 = callInst->getArgOperand(2);
                 ConstantInt *ilen = dyn_cast<ConstantInt>(op2);
                 if (ilen) {
 
@@ -866,7 +892,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
 
             if (isMemcmp || isStrncmp || isStrncasecmp) {
 
-              Value *      op2 = callInst->getArgOperand(2);
+              Value       *op2 = callInst->getArgOperand(2);
               ConstantInt *ilen = dyn_cast<ConstantInt>(op2);
 
               if (ilen) {
@@ -921,7 +947,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
               std::string outstring;
               fprintf(stderr, "%s: length %zu/%zu \"", FuncName.c_str(), optLen,
                       thestring.length());
-              for (uint8_t i = 0; i < thestring.length(); i++) {
+              for (uint16_t i = 0; i < (uint16_t)thestring.length(); i++) {
 
                 uint8_t c = thestring[i];
                 if (c <= 32 || c >= 127)
@@ -956,7 +982,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
 
   }
 
-  // afl++ END
+  // AFL++ END
 
   SanCovTracePCIndir =
       M.getOrInsertFunction(SanCovTracePCIndirName, VoidTy, IntptrTy);
@@ -980,10 +1006,11 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
   for (auto &F : M)
     instrumentFunction(F, DTCallback, PDTCallback);
 
-  // afl++ START
+  // AFL++ START
   if (dFile.is_open()) dFile.close();
 
-  if (!getenv("AFL_LLVM_LTO_DONTWRITEID") || dictionary.size() || map_addr) {
+  if (!getenv("AFL_LLVM_LTO_SKIPINIT") &&
+      (!getenv("AFL_LLVM_LTO_DONTWRITEID") || dictionary.size() || map_addr)) {
 
     // yes we could create our own function, insert it into ctors ...
     // but this would be a pain in the butt ... so we use afl-llvm-rt-lto.o
@@ -1017,7 +1044,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
       GlobalVariable *AFLMapAddrFixed = new GlobalVariable(
           M, Int64Tyi, true, GlobalValue::ExternalLinkage, 0, "__afl_map_addr");
       ConstantInt *MapAddr = ConstantInt::get(Int64Tyi, map_addr);
-      StoreInst *  StoreMapAddr = IRB.CreateStore(MapAddr, AFLMapAddrFixed);
+      StoreInst   *StoreMapAddr = IRB.CreateStore(MapAddr, AFLMapAddrFixed);
       ModuleSanitizerCoverageLTO::SetNoSanitizeMetadata(StoreMapAddr);
 
     }
@@ -1032,7 +1059,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
           new GlobalVariable(M, Int32Tyi, true, GlobalValue::ExternalLinkage, 0,
                              "__afl_final_loc");
       ConstantInt *const_loc = ConstantInt::get(Int32Tyi, write_loc);
-      StoreInst *  StoreFinalLoc = IRB.CreateStore(const_loc, AFLFinalLoc);
+      StoreInst   *StoreFinalLoc = IRB.CreateStore(const_loc, AFLFinalLoc);
       ModuleSanitizerCoverageLTO::SetNoSanitizeMetadata(StoreFinalLoc);
 
     }
@@ -1133,7 +1160,7 @@ bool ModuleSanitizerCoverageLTO::instrumentModule(
 
   }
 
-  // afl++ END
+  // AFL++ END
 
   // We don't reference these arrays directly in any of our runtime functions,
   // so we need to prevent them from being dead stripped.
@@ -1159,7 +1186,7 @@ static bool isFullDominator(const BasicBlock *BB, const DominatorTree *DT) {
 }
 
 // True if block has predecessors and it postdominates all of them.
-static bool isFullPostDominator(const BasicBlock *       BB,
+static bool isFullPostDominator(const BasicBlock        *BB,
                                 const PostDominatorTree *PDT) {
 
   if (pred_begin(BB) == pred_end(BB)) return false;
@@ -1175,8 +1202,8 @@ static bool isFullPostDominator(const BasicBlock *       BB,
 }
 
 static bool shouldInstrumentBlock(const Function &F, const BasicBlock *BB,
-                                  const DominatorTree *           DT,
-                                  const PostDominatorTree *       PDT,
+                                  const DominatorTree            *DT,
+                                  const PostDominatorTree        *PDT,
                                   const SanitizerCoverageOptions &Options) {
 
   // Don't insert coverage for blocks containing nothing but unreachable: we
@@ -1190,10 +1217,10 @@ static bool shouldInstrumentBlock(const Function &F, const BasicBlock *BB,
   // (catchswitch blocks).
   if (BB->getFirstInsertionPt() == BB->end()) return false;
 
-  // afl++ START
+  // AFL++ START
   if (!Options.NoPrune && &F.getEntryBlock() == BB && F.size() > 1)
     return false;
-  // afl++ END
+  // AFL++ END
 
   if (Options.NoPrune || &F.getEntryBlock() == BB) return true;
 
@@ -1235,10 +1262,10 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
   // if (Blocklist && Blocklist->inSection("coverage", "fun", F.getName()))
   // return;
 
-  // afl++ START
+  // AFL++ START
   if (!F.size()) return;
   if (!isInInstrumentList(&F, FMNAME)) return;
-  // afl++ END
+  // AFL++ END
 
   if (Options.CoverageType >= SanitizerCoverageOptions::SCK_Edge)
     SplitAllCriticalEdges(
@@ -1246,7 +1273,7 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
   SmallVector<Instruction *, 8> IndirCalls;
   SmallVector<BasicBlock *, 16> BlocksToInstrument;
 
-  const DominatorTree *    DT = DTCallback(F);
+  const DominatorTree     *DT = DTCallback(F);
   const PostDominatorTree *PDT = PDTCallback(F);
   bool                     IsLeafFunc = true;
   uint32_t                 skip_next = 0;
@@ -1294,8 +1321,8 @@ void ModuleSanitizerCoverageLTO::instrumentFunction(
       if (!skip_next && (selectInst = dyn_cast<SelectInst>(&IN))) {
 
         uint32_t    vector_cnt = 0;
-        Value *     condition = selectInst->getCondition();
-        Value *     result;
+        Value      *condition = selectInst->getCondition();
+        Value      *result;
         auto        t = condition->getType();
         IRBuilder<> IRB(selectInst->getNextNode());
 
@@ -1536,7 +1563,7 @@ bool ModuleSanitizerCoverageLTO::InjectCoverage(
 
   for (size_t i = 0, N = AllBlocks.size(); i < N; i++) {
 
-    // afl++ START
+    // AFL++ START
     if (BlockList.size()) {
 
       int skip = 0;
@@ -1558,7 +1585,7 @@ bool ModuleSanitizerCoverageLTO::InjectCoverage(
 
     }
 
-    // afl++ END
+    // AFL++ END
 
     InjectCoverageAtBlock(F, *AllBlocks[i], i, IsLeafFunc);
 
@@ -1584,8 +1611,8 @@ void ModuleSanitizerCoverageLTO::InjectCoverageForIndirectCalls(
   for (auto I : IndirCalls) {
 
     IRBuilder<> IRB(I);
-    CallBase &  CB = cast<CallBase>(*I);
-    Value *     Callee = CB.getCalledOperand();
+    CallBase   &CB = cast<CallBase>(*I);
+    Value      *Callee = CB.getCalledOperand();
     if (isa<InlineAsm>(Callee)) continue;
     IRB.CreateCall(SanCovTracePCIndir, IRB.CreatePointerCast(Callee, IntptrTy));
 
@@ -1593,7 +1620,7 @@ void ModuleSanitizerCoverageLTO::InjectCoverageForIndirectCalls(
 
 }
 
-void ModuleSanitizerCoverageLTO::InjectCoverageAtBlock(Function &  F,
+void ModuleSanitizerCoverageLTO::InjectCoverageAtBlock(Function   &F,
                                                        BasicBlock &BB,
                                                        size_t      Idx,
                                                        bool        IsLeafFunc) {
@@ -1624,7 +1651,7 @@ void ModuleSanitizerCoverageLTO::InjectCoverageAtBlock(Function &  F,
 
   if (Options.TracePCGuard) {
 
-    // afl++ START
+    // AFL++ START
     ++afl_global_id;
 
     if (dFile.is_open()) {
@@ -1688,7 +1715,7 @@ void ModuleSanitizerCoverageLTO::InjectCoverageAtBlock(Function &  F,
     // done :)
 
     inst++;
-    // afl++ END
+    // AFL++ END
 
     /*
     XXXXXXXXXXXXXXXXXXX
@@ -1750,30 +1777,22 @@ std::string ModuleSanitizerCoverageLTO::getSectionName(
 
 }
 
-char ModuleSanitizerCoverageLegacyPass::ID = 0;
+char ModuleSanitizerCoverageLTOLegacyPass::ID = 0;
 
-INITIALIZE_PASS_BEGIN(ModuleSanitizerCoverageLegacyPass, "sancov",
+INITIALIZE_PASS_BEGIN(ModuleSanitizerCoverageLTOLegacyPass, "sancov-lto",
                       "Pass for instrumenting coverage on functions", false,
                       false)
 INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
 INITIALIZE_PASS_DEPENDENCY(PostDominatorTreeWrapperPass)
-INITIALIZE_PASS_END(ModuleSanitizerCoverageLegacyPass, "sancov",
+INITIALIZE_PASS_END(ModuleSanitizerCoverageLTOLegacyPass, "sancov-lto",
                     "Pass for instrumenting coverage on functions", false,
                     false)
 
-ModulePass *llvm::createModuleSanitizerCoverageLegacyPassPass(
-    const SanitizerCoverageOptions &Options,
-    const std::vector<std::string> &AllowlistFiles,
-    const std::vector<std::string> &BlocklistFiles) {
-
-  return new ModuleSanitizerCoverageLegacyPass(Options);
-
-}
-
+#if LLVM_VERSION_MAJOR < 16
 static void registerLTOPass(const PassManagerBuilder &,
                             legacy::PassManagerBase &PM) {
 
-  auto p = new ModuleSanitizerCoverageLegacyPass();
+  auto p = new ModuleSanitizerCoverageLTOLegacyPass();
   PM.add(p);
 
 }
@@ -1784,8 +1803,9 @@ static RegisterStandardPasses RegisterCompTransPass(
 static RegisterStandardPasses RegisterCompTransPass0(
     PassManagerBuilder::EP_EnabledOnOptLevel0, registerLTOPass);
 
-#if LLVM_VERSION_MAJOR >= 11
+  #if LLVM_VERSION_MAJOR >= 11
 static RegisterStandardPasses RegisterCompTransPassLTO(
     PassManagerBuilder::EP_FullLinkTimeOptimizationLast, registerLTOPass);
+  #endif
 #endif
 
