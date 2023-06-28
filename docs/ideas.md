@@ -3,6 +3,8 @@
 In the following, we describe a variety of ideas that could be implemented for
 future AFL++ versions.
 
+**NOTE:** Our GSoC participation is concerning [libafl](https://github.com/AFLplusplus/libafl), not AFL++.
+
 ## Analysis software
 
 Currently analysis is done by using afl-plot, which is rather outdated. A GTK or
@@ -16,21 +18,10 @@ and Y axis, zoom factor, log scaling on-off, etc.
 
 Mentor: vanhauser-thc
 
-## WASM Instrumentation
-
-Currently, AFL++ can be used for source code fuzzing and traditional binaries.
-With the rise of WASM as a compile target, however, a novel way of instrumentation
-needs to be implemented for binaries compiled to Webassembly. This can either be
-done by inserting instrumentation directly into the WASM AST, or by patching
-feedback into a WASM VM of choice, similar to the current Unicorn
-instrumentation.
-
-Mentor: any
-
 ## Support other programming languages
 
-Other programming languages also use llvm hence they could be (easily?) supported
-for fuzzing, e.g., mono, swift, go, kotlin native, fortran, ...
+Other programming languages also use llvm hence they could be (easily?)
+supported for fuzzing, e.g., mono, swift, go, kotlin native, fortran, ...
 
 GCC also supports: Objective-C, Fortran, Ada, Go, and D (according to
 [Gcc homepage](https://gcc.gnu.org/))

@@ -41,7 +41,6 @@ cc_defaults {
     "instrumentation",
   ],
   cflags: [
-    "-flto=full",
     "-funroll-loops",
     "-Wno-pointer-sign",
     "-Wno-pointer-arith",
@@ -118,6 +117,8 @@ cc_binary {
     "src/afl-sharedmem.c",
     "src/afl-forkserver.c",
     "src/afl-performance.c",
+    "src/afl-fuzz-mutators.c",
+    "src/afl-fuzz-python.c",
   ],
 }
 
