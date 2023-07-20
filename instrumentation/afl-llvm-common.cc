@@ -12,6 +12,7 @@
 #include <list>
 #include <string>
 #include <fstream>
+#include <cmath>
 
 #include <llvm/Support/raw_ostream.h>
 
@@ -288,10 +289,11 @@ void scanForDangerousFunctions(llvm::Module *M) {
 
     StringRef ifunc_name = IF.getName();
     Constant *r = IF.getResolver();
+    if (r->getNumOperands() == 0) { continue; }
     StringRef r_name = cast<Function>(r->getOperand(0))->getName();
     if (!be_quiet)
       fprintf(stderr,
-              "Info: Found an ifunc with name %s that points to resolver "
+              "Note: Found an ifunc with name %s that points to resolver "
               "function %s, we will not instrument this, putting it into the "
               "block list.\n",
               ifunc_name.str().c_str(), r_name.str().c_str());
@@ -329,7 +331,7 @@ void scanForDangerousFunctions(llvm::Module *M) {
 
                 if (!be_quiet)
                   fprintf(stderr,
-                          "Info: Found constructor function %s with prio "
+                          "Note: Found constructor function %s with prio "
                           "%u, we will not instrument this, putting it into a "
                           "block list.\n",
                           F->getName().str().c_str(), Priority);
@@ -582,7 +584,7 @@ bool isInInstrumentList(llvm::Function *F, std::string Filename) {
 }
 
 // Calculate the number of average collisions that would occur if all
-// location IDs would be assigned randomly (like normal afl/afl++).
+// location IDs would be assigned randomly (like normal afl/AFL++).
 // This uses the "balls in bins" algorithm.
 unsigned long long int calculateCollisions(uint32_t edges) {
 

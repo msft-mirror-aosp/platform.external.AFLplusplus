@@ -12,7 +12,7 @@
    NGRAM previous location coverage comes from Adrian Herrera.
 
    Copyright 2015, 2016 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -251,7 +251,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   /* Decide instrumentation ratio */
 
-  char *       inst_ratio_str = getenv("AFL_INST_RATIO");
+  char        *inst_ratio_str = getenv("AFL_INST_RATIO");
   unsigned int inst_ratio = 100;
 
   if (inst_ratio_str) {
@@ -413,7 +413,7 @@ bool AFLCoverage::runOnModule(Module &M) {
   GlobalVariable *AFLContext = NULL;
 
   if (ctx_str || caller_str)
-#if defined(__ANDROID__) || defined(__HAIKU__)
+#if defined(__ANDROID__) || defined(__HAIKU__) || defined(NO_TLS)
     AFLContext = new GlobalVariable(
         M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_ctx");
 #else
@@ -424,7 +424,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 #ifdef AFL_HAVE_VECTOR_INTRINSICS
   if (ngram_size)
-  #if defined(__ANDROID__) || defined(__HAIKU__)
+  #if defined(__ANDROID__) || defined(__HAIKU__) || defined(NO_TLS)
     AFLPrevLoc = new GlobalVariable(
         M, PrevLocTy, /* isConstant */ false, GlobalValue::ExternalLinkage,
         /* Initializer */ nullptr, "__afl_prev_loc");
@@ -437,7 +437,7 @@ bool AFLCoverage::runOnModule(Module &M) {
   #endif
   else
 #endif
-#if defined(__ANDROID__) || defined(__HAIKU__)
+#if defined(__ANDROID__) || defined(__HAIKU__) || defined(NO_TLS)
     AFLPrevLoc = new GlobalVariable(
         M, Int32Ty, false, GlobalValue::ExternalLinkage, 0, "__afl_prev_loc");
 #else
@@ -448,7 +448,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 #ifdef AFL_HAVE_VECTOR_INTRINSICS
   if (ctx_k)
-  #if defined(__ANDROID__) || defined(__HAIKU__)
+  #if defined(__ANDROID__) || defined(__HAIKU__) || defined(NO_TLS)
     AFLPrevCaller = new GlobalVariable(
         M, PrevCallerTy, /* isConstant */ false, GlobalValue::ExternalLinkage,
         /* Initializer */ nullptr, "__afl_prev_caller");
@@ -461,7 +461,7 @@ bool AFLCoverage::runOnModule(Module &M) {
   #endif
   else
 #endif
-#if defined(__ANDROID__) || defined(__HAIKU__)
+#if defined(__ANDROID__) || defined(__HAIKU__) || defined(NO_TLS)
     AFLPrevCaller =
         new GlobalVariable(M, Int32Ty, false, GlobalValue::ExternalLinkage, 0,
                            "__afl_prev_caller");
@@ -486,7 +486,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
   Constant *PrevLocShuffleMask = ConstantVector::get(PrevLocShuffle);
 
-  Constant *                  PrevCallerShuffleMask = NULL;
+  Constant                   *PrevCallerShuffleMask = NULL;
   SmallVector<Constant *, 32> PrevCallerShuffle = {UndefValue::get(Int32Ty)};
 
   if (ctx_k) {
@@ -506,7 +506,7 @@ bool AFLCoverage::runOnModule(Module &M) {
   // other constants we need
   ConstantInt *One = ConstantInt::get(Int8Ty, 1);
 
-  Value *   PrevCtx = NULL;     // CTX sensitive coverage
+  Value    *PrevCtx = NULL;     // CTX sensitive coverage
   LoadInst *PrevCaller = NULL;  // K-CTX coverage
 
   /* Instrument all the things! */

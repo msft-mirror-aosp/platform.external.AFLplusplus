@@ -14,9 +14,9 @@ third_party: {
 		value: "https://github.com/AFLplusplus/AFLplusplus"
 	}
 license_type: NOTICE
-	version: "ba3c7bfe40f9b17a691958e3525828385127ad25"
+	version: "26cbc1e99337da4dc82c7c827dc2dac0a3733dc2"
 	last_upgrade_date {
-		year: 2022
+		year: 2023
 		month: 6
 		day: 6
 	}
