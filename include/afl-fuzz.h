@@ -10,7 +10,7 @@
                      Dominik Maier <mail@dmnk.co>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -169,12 +169,23 @@ struct queue_entry {
 
   u32 bitmap_size,                      /* Number of bits set in bitmap     */
       fuzz_level,                       /* Number of fuzzing iterations     */
-      n_fuzz_entry;                     /* offset in n_fuzz                 */
+      n_fuzz_entry                      /* offset in n_fuzz                 */
+#ifdef INTROSPECTION
+      ,
+      stats_selected,                   /* stats: how often selected        */
+      stats_skipped,                    /* stats: how often skipped         */
+      stats_finds,                      /* stats: # of saved finds          */
+      stats_crashes,                    /* stats: # of saved crashes        */
+      stats_tmouts                      /* stats: # of saved timeouts       */
+#endif
+      ;
 
   u64 exec_us,                          /* Execution time (us)              */
       handicap,                         /* Number of queue cycles behind    */
       depth,                            /* Path depth                       */
-      exec_cksum;                       /* Checksum of the execution trace  */
+      exec_cksum,                       /* Checksum of the execution trace  */
+      custom,                           /* Marker for custom mutators       */
+      stats_mutated;                    /* stats: # of mutations performed  */
 
   u8 *trace_mini;                       /* Trace bytes, if kept             */
   u32 tc_ref;                           /* Trace bytes ref count            */
@@ -188,7 +199,7 @@ struct queue_entry {
 
   u8 *testcase_buf;                     /* The testcase buffer, if loaded.  */
 
-  u8 *            cmplog_colorinput;    /* the result buf of colorization   */
+  u8             *cmplog_colorinput;    /* the result buf of colorization   */
   struct tainted *taint;                /* Taint information from CmpLog    */
 
   struct queue_entry *mother;           /* queue entry this based on        */
@@ -333,6 +344,8 @@ enum {
   /* 11 */ PY_FUNC_QUEUE_NEW_ENTRY,
   /* 12 */ PY_FUNC_INTROSPECTION,
   /* 13 */ PY_FUNC_DESCRIBE,
+  /* 14 */ PY_FUNC_FUZZ_SEND,
+  /* 15 */ PY_FUNC_SPLICE_OPTOUT,
   PY_FUNC_COUNT
 
 };
@@ -341,18 +354,18 @@ typedef struct py_mutator {
 
   PyObject *py_module;
   PyObject *py_functions[PY_FUNC_COUNT];
-  void *    afl_state;
-  void *    py_data;
+  void     *afl_state;
+  void     *py_data;
 
-  u8 *   fuzz_buf;
+  u8    *fuzz_buf;
   size_t fuzz_size;
 
   Py_buffer post_process_buf;
 
-  u8 *   trim_buf;
+  u8    *trim_buf;
   size_t trim_size;
 
-  u8 *   havoc_buf;
+  u8    *havoc_buf;
   size_t havoc_size;
 
 } py_mutator_t;
@@ -361,13 +374,13 @@ typedef struct py_mutator {
 
 typedef struct MOpt_globals {
 
-  u64 * finds;
-  u64 * finds_v2;
-  u64 * cycles;
-  u64 * cycles_v2;
-  u64 * cycles_v3;
+  u64  *finds;
+  u64  *finds_v2;
+  u64  *cycles;
+  u64  *cycles_v2;
+  u64  *cycles_v3;
   u32   is_pilot_mode;
-  u64 * pTime;
+  u64  *pTime;
   u64   period;
   char *havoc_stagename;
   char *splice_stageformat;
@@ -386,14 +399,18 @@ typedef struct afl_env_vars {
       afl_bench_until_crash, afl_debug_child, afl_autoresume, afl_cal_fast,
       afl_cycle_schedules, afl_expand_havoc, afl_statsd, afl_cmplog_only_new,
       afl_exit_on_seed_issues, afl_try_affinity, afl_ignore_problems,
-      afl_keep_timeouts, afl_pizza_mode;
+      afl_keep_timeouts, afl_no_crash_readme, afl_ignore_timeouts,
+      afl_no_startup_calibration, afl_no_warn_instability,
+      afl_post_process_keep_original;
 
   u8 *afl_tmpdir, *afl_custom_mutator_library, *afl_python_module, *afl_path,
       *afl_hang_tmout, *afl_forksrv_init_tmout, *afl_preload,
       *afl_max_det_extras, *afl_statsd_host, *afl_statsd_port,
       *afl_crash_exitcode, *afl_statsd_tags_flavor, *afl_testcache_size,
-      *afl_testcache_entries, *afl_kill_signal, *afl_target_env,
-      *afl_persistent_record, *afl_exit_on_time;
+      *afl_testcache_entries, *afl_child_kill_signal, *afl_fsrv_kill_signal,
+      *afl_target_env, *afl_persistent_record, *afl_exit_on_time;
+
+  s32 afl_pizza_mode;
 
 } afl_env_vars_t;
 
@@ -406,7 +423,7 @@ struct afl_pass_stat {
 
 struct foreign_sync {
 
-  u8 *   dir;
+  u8    *dir;
   time_t mtime;
 
 };
@@ -418,7 +435,7 @@ typedef struct afl_state {
 
   afl_forkserver_t fsrv;
   sharedmem_t      shm;
-  sharedmem_t *    shm_fuzz;
+  sharedmem_t     *shm_fuzz;
   afl_env_vars_t   afl_env;
 
   char **argv;                                            /* argv if needed */
@@ -483,6 +500,7 @@ typedef struct afl_state {
       no_unlink,                        /* do not unlink cur_input          */
       debug,                            /* Debug mode                       */
       custom_only,                      /* Custom mutator only mode         */
+      custom_splice_optout,             /* Custom mutator no splice buffer  */
       is_main_node,                     /* if this is the main node         */
       is_secondary_node,                /* if this is a secondary instance  */
       pizza_is_served;                  /* pizza mode                       */
@@ -529,7 +547,7 @@ typedef struct afl_state {
       *virgin_crash;                    /* Bits we haven't seen in crashes  */
 
   double *alias_probability;            /* alias weighted probabilities     */
-  u32 *   alias_table;                /* alias weighted random lookup table */
+  u32    *alias_table;                /* alias weighted random lookup table */
   u32     active_items;                 /* enabled entries in the queue     */
 
   u8 *var_bytes;                        /* Bytes that appear to be variable */
@@ -577,7 +595,9 @@ typedef struct afl_state {
       last_find_time,                   /* Time for most recent path (ms)   */
       last_crash_time,                  /* Time for most recent crash (ms)  */
       last_hang_time,                   /* Time for most recent hang (ms)   */
-      exit_on_time;                     /* Delay to exit if no new paths    */
+      longest_find_time,                /* Longest time taken for a find    */
+      exit_on_time,                     /* Delay to exit if no new paths    */
+      sync_time;                        /* Sync time (ms)                   */
 
   u32 slowest_exec_ms,                  /* Slowest testcase non hang in ms  */
       subseq_tmouts;                    /* Number of timeouts in a row      */
@@ -642,7 +662,7 @@ typedef struct afl_state {
 
   /* CmpLog */
 
-  char *           cmplog_binary;
+  char            *cmplog_binary;
   afl_forkserver_t cmplog_fsrv;     /* cmplog has its own little forkserver */
 
   /* Custom mutators */
@@ -654,10 +674,10 @@ typedef struct afl_state {
   u32 cmplog_max_filesize;
   u32 cmplog_lvl;
   u32 colorize_success;
-  u8  cmplog_enable_arith, cmplog_enable_transform;
+  u8  cmplog_enable_arith, cmplog_enable_transform, cmplog_random_colorization;
 
   struct afl_pass_stat *pass_stats;
-  struct cmp_map *      orig_cmp_map;
+  struct cmp_map       *orig_cmp_map;
 
   u8 describe_op_buf_256[256]; /* describe_op will use this to return a string
                                   up to 256 */
@@ -678,20 +698,22 @@ typedef struct afl_state {
 
   /* statistics file */
   double last_bitmap_cvg, last_stability, last_eps;
+  u64    stats_file_update_freq_msecs;  /* Stats update frequency (msecs)   */
 
   /* plot file saves from last run */
   u32 plot_prev_qp, plot_prev_pf, plot_prev_pnf, plot_prev_ce, plot_prev_md;
   u64 plot_prev_qc, plot_prev_uc, plot_prev_uh, plot_prev_ed;
 
-  u64 stats_last_stats_ms, stats_last_plot_ms, stats_last_ms, stats_last_execs;
+  u64 stats_last_stats_ms, stats_last_plot_ms, stats_last_queue_ms,
+      stats_last_ms, stats_last_execs;
 
   /* StatsD */
   u64                statsd_last_send_ms;
   struct sockaddr_in statsd_server;
   int                statsd_sock;
-  char *             statsd_tags_flavor;
-  char *             statsd_tags_format;
-  char *             statsd_metric_format;
+  char              *statsd_tags_flavor;
+  char              *statsd_tags_format;
+  char              *statsd_metric_format;
   int                statsd_metric_format_type;
 
   double stats_avg_exec;
@@ -769,9 +791,9 @@ typedef struct afl_state {
 struct custom_mutator {
 
   const char *name;
-  char *      name_short;
-  void *      dh;
-  u8 *        post_process_buf;
+  char       *name_short;
+  void       *dh;
+  u8         *post_process_buf;
   u8          stacked_custom_prob, stacked_custom;
 
   void *data;                                    /* custom mutator data ptr */
@@ -815,17 +837,29 @@ struct custom_mutator {
   u32 (*afl_custom_fuzz_count)(void *data, const u8 *buf, size_t buf_size);
 
   /**
-   * Perform custom mutations on a given input
+   * Opt-out of a splicing input for the fuzz mutator
    *
-   * (Optional for now. Required in the future)
+   * Empty dummy function. It's presence tells afl-fuzz not to pass a
+   * splice data pointer and len.
    *
    * @param data pointer returned in afl_custom_init by this custom mutator
+   * @noreturn
+   */
+  void (*afl_custom_splice_optout)(void *data);
+
+  /**
+   * Perform custom mutations on a given input
+   *
+   * (Optional)
+   *
+   * Getting an add_buf can be skipped by using afl_custom_splice_optout().
+   *
+   * @param[in] data Pointer returned in afl_custom_init by this custom mutator
    * @param[in] buf Pointer to the input data to be mutated and the mutated
    *     output
    * @param[in] buf_size Size of the input/output data
-   * @param[out] out_buf the new buffer. We may reuse *buf if large enough.
-   *             *out_buf = NULL is treated as FATAL.
-   * @param[in] add_buf Buffer containing the additional test case
+   * @param[out] out_buf The new buffer, under your memory mgmt.
+   * @param[in] add_buf Buffer containing an additional test case (splicing)
    * @param[in] add_buf_size Size of the additional test case
    * @param[in] max_size Maximum size of the mutated output. The mutation must
    * not produce data larger than max_size.
@@ -853,14 +887,19 @@ struct custom_mutator {
    * A post-processing function to use right before AFL writes the test case to
    * disk in order to execute the target.
    *
-   * (Optional) If this functionality is not needed, simply don't define this
+   * NOTE: Do not do any random changes to the data in this function!
+   *
+   * PERFORMANCE: If you can modify the data in-place you will have a better
+   *              performance. Modify *data and set `*out_buf = data`.
+   *
+   * (Optional) If this functionality is not needed, simply do not define this
    * function.
    *
    * @param[in] data pointer returned in afl_custom_init by this custom mutator
    * @param[in] buf Buffer containing the test case to be executed
    * @param[in] buf_size Size of the test case
    * @param[out] out_buf Pointer to the buffer storing the test case after
-   *     processing. External library should allocate memory for out_buf.
+   *     processing. The external library should allocate memory for out_buf.
    *     It can chose to alter buf in-place, if the space is large enough.
    * @return Size of the output buffer.
    */
@@ -967,6 +1006,19 @@ struct custom_mutator {
   u8 (*afl_custom_queue_get)(void *data, const u8 *filename);
 
   /**
+   * This method can be used if you want to send data to the target yourself,
+   * e.g. via IPC. This replaces some usage of utils/afl_proxy but requires
+   * that you start the target with afl-fuzz.
+   *
+   * (Optional)
+   *
+   * @param data pointer returned in afl_custom_init by this custom mutator
+   * @param buf Buffer containing the test case
+   * @param buf_size Size of the test case
+   */
+  void (*afl_custom_fuzz_send)(void *data, const u8 *buf, size_t buf_size);
+
+  /**
    * Allow for additional analysis (e.g. calling a different tool that does a
    * different kind of coverage and saves this for the custom mutator).
    *
@@ -1020,6 +1072,7 @@ struct custom_mutator *load_custom_mutator_py(afl_state_t *, char *);
 void                   finalize_py_module(void *);
 
 u32         fuzz_count_py(void *, const u8 *, size_t);
+void        fuzz_send_py(void *, const u8 *, size_t);
 size_t      post_process_py(void *, u8 *, size_t, u8 **);
 s32         init_trim_py(void *, u8 *, size_t);
 s32         post_trim_py(void *, u8);
@@ -1029,6 +1082,7 @@ u8          havoc_mutation_probability_py(void *);
 u8          queue_get_py(void *, const u8 *);
 const char *introspection_py(void *);
 u8          queue_new_entry_py(void *, const u8 *, const u8 *);
+void        splice_optout(void *);
 void        deinit_py(void *);
 
 #endif
@@ -1051,7 +1105,6 @@ u32  count_bits(afl_state_t *, u8 *);
 u32  count_bytes(afl_state_t *, u8 *);
 u32  count_non_255_bytes(afl_state_t *, u8 *);
 void simplify_trace(afl_state_t *, u8 *);
-void classify_counts(afl_forkserver_t *);
 #ifdef WORD_SIZE_64
 void discover_word(u8 *ret, u64 *current, u64 *virgin);
 #else
@@ -1065,6 +1118,9 @@ u8 *describe_op(afl_state_t *, u8, size_t);
 u8 save_if_interesting(afl_state_t *, void *, u32, u8);
 u8 has_new_bits(afl_state_t *, u8 *);
 u8 has_new_bits_unclassified(afl_state_t *, u8 *);
+#ifndef AFL_SHOWMAP
+void classify_counts(afl_forkserver_t *);
+#endif
 
 /* Extras */
 
@@ -1084,6 +1140,7 @@ void load_stats_file(afl_state_t *);
 void write_setup_file(afl_state_t *, u32, char **);
 void write_stats_file(afl_state_t *, u32, double, double, double);
 void maybe_update_plot_file(afl_state_t *, u32, double, double);
+void write_queue_stats(afl_state_t *);
 void show_stats(afl_state_t *);
 void show_stats_normal(afl_state_t *);
 void show_stats_pizza(afl_state_t *);
@@ -1139,11 +1196,13 @@ void   fix_up_sync(afl_state_t *);
 void   check_asan_opts(afl_state_t *);
 void   check_binary(afl_state_t *, u8 *);
 void   check_if_tty(afl_state_t *);
-void   setup_signal_handlers(void);
 void   save_cmdline(afl_state_t *, u32, char **);
 void   read_foreign_testcases(afl_state_t *, int);
 void   write_crash_readme(afl_state_t *afl);
 u8     check_if_text_buf(u8 *buf, u32 len);
+#ifndef AFL_SHOWMAP
+void setup_signal_handlers(void);
+#endif
 
 /* CmpLog */
 
@@ -1165,7 +1224,7 @@ double rand_next_percent(afl_state_t *afl);
 
 static inline u32 rand_below(afl_state_t *afl, u32 limit) {
 
-  if (limit <= 1) return 0;
+  if (unlikely(limit <= 1)) return 0;
 
   /* The boundary not being necessarily a power of 2,
      we need to ensure the result uniformity. */
@@ -1198,7 +1257,7 @@ static inline u32 rand_below(afl_state_t *afl, u32 limit) {
    expand havoc mode */
 static inline u32 rand_below_datalen(afl_state_t *afl, u32 limit) {
 
-  if (limit <= 1) return 0;
+  if (unlikely(limit <= 1)) return 0;
 
   switch (rand_below(afl, 3)) {
 
