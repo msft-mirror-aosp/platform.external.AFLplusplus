@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -124,6 +124,9 @@ void bind_to_free_cpu(afl_state_t *afl) {
     }
 
     WARNF("Not binding to a CPU core (AFL_NO_AFFINITY set).");
+  #ifdef __linux__
+    if (afl->fsrv.nyx_mode) { afl->fsrv.nyx_bind_cpu_id = 0; }
+  #endif
     return;
 
   }
@@ -151,6 +154,9 @@ void bind_to_free_cpu(afl_state_t *afl) {
     } else {
 
       OKF("CPU binding request using -b %d successful.", afl->cpu_to_bind);
+  #ifdef __linux__
+      if (afl->fsrv.nyx_mode) { afl->fsrv.nyx_bind_cpu_id = afl->cpu_to_bind; }
+  #endif
 
     }
 
@@ -942,6 +948,7 @@ void perform_dry_run(afl_state_t *afl) {
           if (!q->was_fuzzed) {
 
             q->was_fuzzed = 1;
+            afl->reinit_table = 1;
             --afl->pending_not_fuzzed;
             --afl->active_items;
 
@@ -951,19 +958,48 @@ void perform_dry_run(afl_state_t *afl) {
 
         } else {
 
-          SAYF("\n" cLRD "[-] " cRST
-               "The program took more than %u ms to process one of the initial "
-               "test cases.\n"
-               "    This is bad news; raising the limit with the -t option is "
-               "possible, but\n"
-               "    will probably make the fuzzing process extremely slow.\n\n"
+          static int say_once = 0;
 
-               "    If this test case is just a fluke, the other option is to "
-               "just avoid it\n"
-               "    altogether, and find one that is less of a CPU hog.\n",
-               afl->fsrv.exec_tmout);
+          if (!say_once) {
 
-          FATAL("Test case '%s' results in a timeout", fn);
+            SAYF(
+                "\n" cLRD "[-] " cRST
+                "The program took more than %u ms to process one of the "
+                "initial "
+                "test cases.\n"
+                "    This is bad news; raising the limit with the -t option is "
+                "possible, but\n"
+                "    will probably make the fuzzing process extremely slow.\n\n"
+
+                "    If this test case is just a fluke, the other option is to "
+                "just avoid it\n"
+                "    altogether, and find one that is less of a CPU hog.\n",
+                afl->fsrv.exec_tmout);
+
+            if (!afl->afl_env.afl_ignore_seed_problems) {
+
+              FATAL("Test case '%s' results in a timeout", fn);
+
+            }
+
+            say_once = 1;
+
+          }
+
+          if (!q->was_fuzzed) {
+
+            q->was_fuzzed = 1;
+            afl->reinit_table = 1;
+            --afl->pending_not_fuzzed;
+            --afl->active_items;
+
+          }
+
+          q->disabled = 1;
+          q->perf_score = 0;
+
+          WARNF("Test case '%s' results in a timeout, skipping", fn);
+          break;
 
         }
 
@@ -1058,7 +1094,19 @@ void perform_dry_run(afl_state_t *afl) {
 
         } else {
 
-          WARNF("Test case '%s' results in a crash, skipping", fn);
+          if (afl->afl_env.afl_crashing_seeds_as_new_crash) {
+
+            WARNF(
+                "Test case '%s' results in a crash, "
+                "as AFL_CRASHING_SEEDS_AS_NEW_CRASH is set, "
+                "saving as a new crash",
+                fn);
+
+          } else {
+
+            WARNF("Test case '%s' results in a crash, skipping", fn);
+
+          }
 
         }
 
@@ -1073,40 +1121,100 @@ void perform_dry_run(afl_state_t *afl) {
         if (!q->was_fuzzed) {
 
           q->was_fuzzed = 1;
+          afl->reinit_table = 1;
           --afl->pending_not_fuzzed;
           --afl->active_items;
 
         }
 
-        q->disabled = 1;
-        q->perf_score = 0;
+        /* Crashing seeds will be regarded as new crashes on startup */
+        if (afl->afl_env.afl_crashing_seeds_as_new_crash) {
 
-        u32 i = 0;
-        while (unlikely(i < afl->queued_items && afl->queue_buf[i] &&
-                        afl->queue_buf[i]->disabled)) {
+          ++afl->total_crashes;
 
-          ++i;
+          if (likely(!afl->non_instrumented_mode)) {
 
-        }
+            classify_counts(&afl->fsrv);
 
-        if (i < afl->queued_items && afl->queue_buf[i]) {
+            simplify_trace(afl, afl->fsrv.trace_bits);
 
-          afl->queue = afl->queue_buf[i];
+            if (!has_new_bits(afl, afl->virgin_crash)) { break; }
+
+          }
+
+          if (unlikely(!afl->saved_crashes) &&
+              (afl->afl_env.afl_no_crash_readme != 1)) {
+
+            write_crash_readme(afl);
+
+          }
+
+          u8  crash_fn[PATH_MAX];
+          u8 *use_name = strstr(q->fname, ",orig:");
+
+          afl->stage_name = "dry_run";
+          afl->stage_short = "dry_run";
+
+#ifndef SIMPLE_FILES
+
+          snprintf(crash_fn, PATH_MAX, "%s/crashes/id:%06llu,sig:%02u,%s%s",
+                   afl->out_dir, afl->saved_crashes, afl->fsrv.last_kill_signal,
+                   describe_op(afl, 0,
+                               NAME_MAX - strlen("id:000000,sig:00,") -
+                                   strlen(use_name)),
+                   use_name);
+
+#else
+
+          snprintf(crash_fn, PATH_MAX, "%s/crashes/id_%06llu_%02u",
+                   afl->out_dir, afl->saved_crashes,
+                   afl->fsrv.last_kill_signal);
+
+#endif
+
+          ++afl->saved_crashes;
+
+          fd = open(crash_fn, O_WRONLY | O_CREAT | O_EXCL, DEFAULT_PERMISSION);
+          if (unlikely(fd < 0)) { PFATAL("Unable to create '%s'", crash_fn); }
+          ck_write(fd, use_mem, read_len, crash_fn);
+          close(fd);
+
+          afl->last_crash_time = get_cur_time();
+          afl->last_crash_execs = afl->fsrv.total_execs;
 
         } else {
 
-          afl->queue = afl->queue_buf[0];
+          u32 i = 0;
+          while (unlikely(i < afl->queued_items && afl->queue_buf[i] &&
+                          afl->queue_buf[i]->disabled)) {
+
+            ++i;
+
+          }
+
+          if (i < afl->queued_items && afl->queue_buf[i]) {
+
+            afl->queue = afl->queue_buf[i];
+
+          } else {
+
+            afl->queue = afl->queue_buf[0];
+
+          }
+
+          afl->max_depth = 0;
+          for (i = 0; i < afl->queued_items && likely(afl->queue_buf[i]); i++) {
+
+            if (!afl->queue_buf[i]->disabled &&
+                afl->queue_buf[i]->depth > afl->max_depth)
+              afl->max_depth = afl->queue_buf[i]->depth;
+
+          }
 
         }
 
-        afl->max_depth = 0;
-        for (i = 0; i < afl->queued_items && likely(afl->queue_buf[i]); i++) {
-
-          if (!afl->queue_buf[i]->disabled &&
-              afl->queue_buf[i]->depth > afl->max_depth)
-            afl->max_depth = afl->queue_buf[i]->depth;
-
-        }
+        q->disabled = 1;
+        q->perf_score = 0;
 
         break;
 
@@ -1192,6 +1300,7 @@ void perform_dry_run(afl_state_t *afl) {
           if (!p->was_fuzzed) {
 
             p->was_fuzzed = 1;
+            afl->reinit_table = 1;
             --afl->pending_not_fuzzed;
             --afl->active_items;
 
@@ -1212,6 +1321,7 @@ void perform_dry_run(afl_state_t *afl) {
           if (!q->was_fuzzed) {
 
             q->was_fuzzed = 1;
+            afl->reinit_table = 1;
             --afl->pending_not_fuzzed;
             --afl->active_items;
 
@@ -1542,8 +1652,8 @@ double get_runnable_processes(void) {
      processes well. */
 
   FILE *f = fopen("/proc/stat", "r");
-  u8 tmp[1024];
-  u32 val = 0;
+  u8    tmp[1024];
+  u32   val = 0;
 
   if (!f) { return 0; }
 
@@ -2126,6 +2236,21 @@ void setup_dirs_fds(afl_state_t *afl) {
 
   fflush(afl->fsrv.plot_file);
 
+#ifdef INTROSPECTION
+
+  tmp = alloc_printf("%s/plot_det_data", afl->out_dir);
+
+  int fd = open(tmp, O_WRONLY | O_CREAT, DEFAULT_PERMISSION);
+  if (fd < 0) { PFATAL("Unable to create '%s'", tmp); }
+  ck_free(tmp);
+
+  afl->fsrv.det_plot_file = fdopen(fd, "w");
+  if (!afl->fsrv.det_plot_file) { PFATAL("fdopen() failed"); }
+
+  if (afl->in_place_resume) { fseek(afl->fsrv.det_plot_file, 0, SEEK_END); }
+
+#endif
+
   /* ignore errors */
 
 }
@@ -2199,7 +2324,8 @@ void check_crash_handling(void) {
      reporting the awful way. */
 
   #if !TARGET_OS_IPHONE
-  if (system("launchctl list 2>/dev/null | grep -q '\\.ReportCrash$'")) return;
+  if (system("launchctl list 2>/dev/null | grep -q '\\.ReportCrash\\>'"))
+    return;
 
   SAYF(
       "\n" cLRD "[-] " cRST
@@ -2226,7 +2352,7 @@ void check_crash_handling(void) {
    *BSD, so we can just let it slide for now. */
 
   s32 fd = open("/proc/sys/kernel/core_pattern", O_RDONLY);
-  u8 fchar;
+  u8  fchar;
 
   if (fd < 0) { return; }
 
@@ -2365,7 +2491,7 @@ void check_cpu_governor(afl_state_t *afl) {
   FATAL("Suboptimal CPU scaling governor");
 
 #elif defined __APPLE__
-  u64 min = 0, max = 0;
+  u64    min = 0, max = 0;
   size_t mlen = sizeof(min);
   if (afl->afl_env.afl_skip_cpufreq) return;
 
