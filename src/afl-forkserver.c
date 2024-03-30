@@ -13,7 +13,7 @@
 
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -129,6 +129,10 @@ nyx_plugin_handler_t *afl_load_libnyx_plugin(u8 *libnyx_binary) {
   plugin->nyx_remove_work_dir = dlsym(handle, "nyx_remove_work_dir");
   if (plugin->nyx_remove_work_dir == NULL) { goto fail; }
 
+  plugin->nyx_config_set_aux_buffer_size =
+      dlsym(handle, "nyx_config_set_aux_buffer_size");
+  if (plugin->nyx_config_set_aux_buffer_size == NULL) { goto fail; }
+
   OKF("libnyx plugin is ready!");
   return plugin;
 
@@ -159,6 +163,8 @@ void afl_nyx_runner_kill(afl_forkserver_t *fsrv) {
       remove_nyx_tmp_workdir(fsrv, fsrv->nyx_tmp_workdir_path);
 
     }
+
+    if (fsrv->nyx_log_fd >= 0) { close(fsrv->nyx_log_fd); }
 
   }
 
@@ -214,6 +220,7 @@ void afl_fsrv_init(afl_forkserver_t *fsrv) {
   fsrv->nyx_bind_cpu_id = 0xFFFFFFFF;
   fsrv->nyx_use_tmp_workdir = false;
   fsrv->nyx_tmp_workdir_path = NULL;
+  fsrv->nyx_log_fd = -1;
 #endif
 
   // this structure needs default so we initialize it if this was not done
@@ -265,6 +272,7 @@ void afl_fsrv_init_dup(afl_forkserver_t *fsrv_to, afl_forkserver_t *from) {
   fsrv_to->uses_crash_exitcode = from->uses_crash_exitcode;
   fsrv_to->crash_exitcode = from->crash_exitcode;
   fsrv_to->child_kill_signal = from->child_kill_signal;
+  fsrv_to->fsrv_kill_signal = from->fsrv_kill_signal;
   fsrv_to->debug = from->debug;
 
   // These are forkserver specific.
@@ -571,6 +579,22 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
     fsrv->nyx_handlers->nyx_config_set_input_buffer_write_protection(nyx_config,
                                                                      true);
 
+    char *nyx_log_path = getenv("AFL_NYX_LOG");
+    if (nyx_log_path) {
+
+      fsrv->nyx_log_fd =
+          open(nyx_log_path, O_CREAT | O_TRUNC | O_WRONLY, DEFAULT_PERMISSION);
+      if (fsrv->nyx_log_fd < 0) {
+
+        NYX_PRE_FATAL(fsrv, "AFL_NYX_LOG path could not be written");
+
+      }
+
+      fsrv->nyx_handlers->nyx_config_set_hprintf_fd(nyx_config,
+                                                    fsrv->nyx_log_fd);
+
+    }
+
     if (fsrv->nyx_standalone) {
 
       fsrv->nyx_handlers->nyx_config_set_process_role(nyx_config, StandAlone);
@@ -589,23 +613,42 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
 
     }
 
-    if (getenv("NYX_REUSE_SNAPSHOT") != NULL) {
+    if (getenv("AFL_NYX_AUX_SIZE") != NULL) {
 
-      if (access(getenv("NYX_REUSE_SNAPSHOT"), F_OK) == -1) {
+      fsrv->nyx_aux_string_len = atoi(getenv("AFL_NYX_AUX_SIZE"));
 
-        NYX_PRE_FATAL(fsrv, "NYX_REUSE_SNAPSHOT path does not exist");
+      if (fsrv->nyx_handlers->nyx_config_set_aux_buffer_size(
+              nyx_config, fsrv->nyx_aux_string_len) != 1) {
+
+        NYX_PRE_FATAL(fsrv,
+                      "Invalid AFL_NYX_AUX_SIZE value set (must be a multiple "
+                      "of 4096) ...");
+
+      }
+
+    } else {
+
+      fsrv->nyx_aux_string_len = 0x1000;
+
+    }
+
+    if (getenv("AFL_NYX_REUSE_SNAPSHOT") != NULL) {
+
+      if (access(getenv("AFL_NYX_REUSE_SNAPSHOT"), F_OK) == -1) {
+
+        NYX_PRE_FATAL(fsrv, "AFL_NYX_REUSE_SNAPSHOT path does not exist");
 
       }
 
       /* stupid sanity check to avoid passing an empty or invalid snapshot
        * directory */
       char *snapshot_file_path =
-          alloc_printf("%s/global.state", getenv("NYX_REUSE_SNAPSHOT"));
+          alloc_printf("%s/global.state", getenv("AFL_NYX_REUSE_SNAPSHOT"));
       if (access(snapshot_file_path, R_OK) == -1) {
 
-        NYX_PRE_FATAL(
-            fsrv,
-            "NYX_REUSE_SNAPSHOT path does not contain a valid Nyx snapshot");
+        NYX_PRE_FATAL(fsrv,
+                      "AFL_NYX_REUSE_SNAPSHOT path does not contain a valid "
+                      "Nyx snapshot");
 
       }
 
@@ -617,13 +660,14 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
       char *workdir_snapshot_path =
           alloc_printf("%s/workdir/snapshot", outdir_path_absolute);
       char *reuse_snapshot_path_real =
-          realpath(getenv("NYX_REUSE_SNAPSHOT"), NULL);
+          realpath(getenv("AFL_NYX_REUSE_SNAPSHOT"), NULL);
 
       if (strcmp(workdir_snapshot_path, reuse_snapshot_path_real) == 0) {
 
-        NYX_PRE_FATAL(fsrv,
-                      "NYX_REUSE_SNAPSHOT path is located in current workdir "
-                      "(use another output directory)");
+        NYX_PRE_FATAL(
+            fsrv,
+            "AFL_NYX_REUSE_SNAPSHOT path is located in current workdir "
+            "(use another output directory)");
 
       }
 
@@ -631,12 +675,11 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
       ck_free(workdir_snapshot_path);
 
       fsrv->nyx_handlers->nyx_config_set_reuse_snapshot_path(
-          nyx_config, getenv("NYX_REUSE_SNAPSHOT"));
+          nyx_config, getenv("AFL_NYX_REUSE_SNAPSHOT"));
 
     }
 
-    fsrv->nyx_runner =
-        fsrv->nyx_handlers->nyx_new(nyx_config, fsrv->nyx_bind_cpu_id);
+    fsrv->nyx_runner = fsrv->nyx_handlers->nyx_new(nyx_config, fsrv->nyx_id);
 
     ck_free(workdir_path);
     ck_free(outdir_path_absolute);
@@ -653,27 +696,27 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
         fsrv->nyx_handlers->nyx_get_bitmap_buffer(fsrv->nyx_runner);
 
     fsrv->nyx_handlers->nyx_option_set_reload_mode(
-        fsrv->nyx_runner, getenv("NYX_DISABLE_SNAPSHOT_MODE") == NULL);
+        fsrv->nyx_runner, getenv("AFL_NYX_DISABLE_SNAPSHOT_MODE") == NULL);
     fsrv->nyx_handlers->nyx_option_apply(fsrv->nyx_runner);
 
     fsrv->nyx_handlers->nyx_option_set_timeout(fsrv->nyx_runner, 2, 0);
     fsrv->nyx_handlers->nyx_option_apply(fsrv->nyx_runner);
 
-    fsrv->nyx_aux_string = malloc(0x1000);
-    memset(fsrv->nyx_aux_string, 0, 0x1000);
+    fsrv->nyx_aux_string = malloc(fsrv->nyx_aux_string_len);
+    memset(fsrv->nyx_aux_string, 0, fsrv->nyx_aux_string_len);
 
     /* dry run */
     fsrv->nyx_handlers->nyx_set_afl_input(fsrv->nyx_runner, "INIT", 4);
     switch (fsrv->nyx_handlers->nyx_exec(fsrv->nyx_runner)) {
 
       case Abort:
-        NYX_PRE_FATAL(fsrv, "Error: Nyx abort occured...");
+        NYX_PRE_FATAL(fsrv, "Error: Nyx abort occurred...");
         break;
       case IoError:
         NYX_PRE_FATAL(fsrv, "Error: QEMU-Nyx has died...");
         break;
       case Error:
-        NYX_PRE_FATAL(fsrv, "Error: Nyx runtime error has occured...");
+        NYX_PRE_FATAL(fsrv, "Error: Nyx runtime error has occurred...");
         break;
       default:
         break;
@@ -973,6 +1016,14 @@ void afl_fsrv_start(afl_forkserver_t *fsrv, char **argv,
      Otherwise, try to figure out what went wrong. */
 
   if (rlen == 4) {
+
+    if (status >= 0x41464c00 && status <= 0x41464cff) {
+
+      FATAL(
+          "Target uses the new forkserver model, you need to switch to a newer "
+          "afl-fuzz too!");
+
+    }
 
     if (!be_quiet) { OKF("All right - fork server is up."); }
 
@@ -1581,7 +1632,7 @@ afl_fsrv_run_target(afl_forkserver_t *fsrv, u32 timeout,
         FATAL("FixMe: Nyx InvalidWriteToPayload handler is missing");
         break;
       case Abort:
-        FATAL("Error: Nyx abort occured...");
+        FATAL("Error: Nyx abort occurred...");
       case IoError:
         if (*stop_soon_p) {
 
@@ -1595,7 +1646,7 @@ afl_fsrv_run_target(afl_forkserver_t *fsrv, u32 timeout,
 
         break;
       case Error:
-        FATAL("Error: Nyx runtime error has occured...");
+        FATAL("Error: Nyx runtime error has occurred...");
         break;
 
     }
