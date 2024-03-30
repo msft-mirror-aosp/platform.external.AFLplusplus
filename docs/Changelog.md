@@ -3,7 +3,101 @@
   This is the list of all noteworthy changes made in every public
   release of the tool. See README.md for the general instruction manual.
 
-### Version ++4.07a (dev)
+### Version ++4.10c (release)
+  - afl-fuzz:
+    - default power schedule is now EXPLORE, due a fix in fast schedules
+      explore is slightly better now.
+    - fixed minor issues in the mutation engine, thanks to @futhewo for
+      reporting!
+    - better deterministic fuzzing is now available, benchmarks have shown
+      to improve fuzzing. Enable with -D. Thanks to @kdsjZh for the PR!
+  - afl-cc:
+    - large rewrite by @SonicStark which fixes a few corner cases, thanks!
+    - LTO mode now requires llvm 12+
+    - workaround for ASAN with gcc_plugin mode
+  - instrumentation:
+    - LLVM 18 support, thanks to @devnexen!
+    - Injection (SQL, LDAP, XSS) fuzzing feature now available, see
+      `instrumentation/README.injections.md` how to activate/use/expand.
+    - compcov/LAF-intel:
+      - floating point splitting bug fix by @hexcoder
+      - due a bug in LLVM 17 integer splitting is disabled there!
+      - when splitting floats was selected, integers were always split as well,
+        fixed to require AFL_LLVM_LAF_SPLIT_COMPARES or _ALL as it should
+    - dynamic instrumentation filtering for LLVM NATIVE, thanks @Mozilla!
+      see utils/dynamic_covfilter/README.md
+  - qemu_mode:
+    - plugins are now activated by default and a new module is included that
+      produces drcov compatible traces for lighthouse/lightkeeper/...
+      thanks to @JRomainG to submitting!
+  - updated Nyx checkout (fixes a bug) and some QOL
+  - updated the custom grammar mutator
+  - document afl-cmin does not work on macOS (but afl-cmin.bash does)
+
+### Version ++4.09c (release)
+  - afl-fuzz:
+    - fixed the new mutation implementation for two bugs
+    - added `AFL_FINAL_SYNC` which forces a final fuzzer sync (also for `-F`)
+      before terminating.
+    - added AFL_IGNORE_SEED_PROBLEMS to skip over seeds that time out instead
+      of exiting with an error message
+    - allow -S/-M naming up to 50 characters (from 24)
+    - CMPLOG:
+      - added scale support (-l S)
+      - skip unhelpful insertions (u8)
+    - added --version and --help command line parameters
+    - fixed endless loop when reading malformed dictionaries
+    - new custom mutator function: post_run - thanks to yangzao!
+  - afl-whatsup:
+    - detect instanced that are starting up and show them as such as not dead
+    - now also shows coverage reached
+    - option -m shows only very relevant stats
+    - option -n will not use color in the output
+  - instrumentation:
+    - fix for a few string compare transform functions for LAF
+    - we are instrumenting __cxx internal functions again. this might break
+      a few targets, please report if so.
+  - frida_mode:
+    - fixes support for large map offsets
+  - support for AFL_FUZZER_LOOPCOUNT for afl.rs and LLVMFuzzerTestOneInput
+  - afl-cmin/afl-cmin.bash: prevent unneeded file errors
+  - added new tool afl-addseeds that adds new seeds to a running campaign
+  - added benchmark/benchmark.py if you want to see how good your fuzzing
+    speed is in comparison to other setups.
+
+### Version ++4.08c (release)
+  - afl-fuzz:
+    - new mutation engine: mutations that favor discovery more paths are
+      prefered until no new finds for 10 minutes then switching to mutations
+      that favor triggering crashes. Modes and switch time can be configured
+      with `-P`. Also input mode for the target can be defined with `-a` to
+      be `text` or `binary` (defaults to `generic`)
+    - new custom mutator that has the new afl++ engine (so it can easily
+      incorporated into new custom mutators), and also comes with a standalone
+      command line tool! See custom_mutators/aflpp/standalone/
+    - display the state of the fuzzing run in the UI :-)
+    - fix timeout setting if '+' is used or a session is restarted
+    - -l X option to enable base64 transformation solving
+    - allow to disable CMPLOG with '-c -' (e.g. afl.rs enforces '-c 0' on
+      every instance which is counterproductive).
+  - afl-cmin/afl-cmin.bash:
+    - fixed a bug inherited from vanilla AFL where a coverage of
+      map[123] = 11 would be the same as map[1123] = 1
+    - warn on crashing inputs
+    - adjust threads if less inputs than threads specified
+  - afl-cc:
+    - fixed an off-by-one instrumentation of iselect, hurting coverage a bit.
+      Thanks to @amykweon for spotting and fixing!
+    - @toka fixed a bug in laf-intel signed integer comparison splitting,
+      thanks a lot!!
+    - more LLVM compatability
+  - frida_mode:
+    - support for long form instrumentation on x86_x64 and arm64
+    - renamed utils/get_symbol_addr.sh to utils/frida_get_symbol_addr.sh
+  - qemu_mode:
+    - added qemu_mode/utils/qemu_get_symbol_addr.sh
+
+### Version ++4.07c (release)
   - afl-fuzz:
     - reverse reading the seeds only on restarts (increases performance)
     - new env `AFL_POST_PROCESS_KEEP_ORIGINAL` to keep the orignal
@@ -18,6 +112,7 @@
     - rewrote our PCGUARD pass to be compatible with LLVM 15+ shenanigans,
       requires LLVM 13+ now instead of 10.0.1+
     - fallback to native LLVM PCGUARD if our PCGUARD is unavailable
+    - fixed a crash in GCC CMPLOG
   - afl-showmap:
     - added custom mutator post_process and send support
     - add `-I filelist` option, an alternative to `-i in_dir`
@@ -29,7 +124,6 @@
   - two new custom mutators are now available:
     - TritonDSE in custom_mutators/aflpp_tritondse
     - SymQEMU in custom_mutators/symqemu
-
 
 ### Version ++4.06c (release)
   - afl-fuzz:

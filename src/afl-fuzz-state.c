@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -89,9 +89,8 @@ void afl_state_init(afl_state_t *afl, uint32_t map_size) {
   afl->w_end = 0.3;
   afl->g_max = 5000;
   afl->period_pilot_tmp = 5000.0;
-  afl->schedule = FAST;                 /* Power schedule (default: FAST)   */
+  afl->schedule = EXPLORE;              /* Power schedule (default: EXPLORE)*/
   afl->havoc_max_mult = HAVOC_MAX_MULT;
-
   afl->clear_screen = 1;                /* Window resized?                  */
   afl->havoc_div = 1;                   /* Cycle count divisor for havoc    */
   afl->stage_name = "init";             /* Name of the current fuzz stage   */
@@ -108,6 +107,7 @@ void afl_state_init(afl_state_t *afl, uint32_t map_size) {
   afl->cmplog_lvl = 2;
   afl->min_length = 1;
   afl->max_length = MAX_FILE;
+  afl->switch_fuzz_mode = STRATEGY_SWITCH_TIME * 1000;
 #ifndef NO_SPLICING
   afl->use_splicing = 1;
 #endif
@@ -139,6 +139,14 @@ void afl_state_init(afl_state_t *afl, uint32_t map_size) {
   afl->fsrv.dev_null_fd = -1;
   afl->fsrv.child_pid = -1;
   afl->fsrv.out_dir_fd = -1;
+
+  /* Init SkipDet */
+  afl->skipdet_g =
+      (struct skipdet_global *)ck_alloc(sizeof(struct skipdet_global));
+  afl->skipdet_g->inf_prof =
+      (struct inf_profile *)ck_alloc(sizeof(struct inf_profile));
+  afl->havoc_prof =
+      (struct havoc_profile *)ck_alloc(sizeof(struct havoc_profile));
 
   init_mopt_globals(afl);
 
@@ -198,6 +206,13 @@ void read_afl_environment(afl_state_t *afl, char **envp) {
 
             afl->afl_env.afl_exit_on_time =
                 (u8 *)get_afl_env(afl_environment_variables[i]);
+
+          } else if (!strncmp(env, "AFL_CRASHING_SEEDS_AS_NEW_CRASH",
+
+                              afl_environment_variable_len)) {
+
+            afl->afl_env.afl_crashing_seeds_as_new_crash =
+                atoi((u8 *)get_afl_env(afl_environment_variables[i]));
 
           } else if (!strncmp(env, "AFL_NO_AFFINITY",
 
@@ -261,6 +276,13 @@ void read_afl_environment(afl_state_t *afl, char **envp) {
             afl->afl_env.afl_import_first =
                 get_afl_env(afl_environment_variables[i]) ? 1 : 0;
 
+          } else if (!strncmp(env, "AFL_FINAL_SYNC",
+
+                              afl_environment_variable_len)) {
+
+            afl->afl_env.afl_final_sync =
+                get_afl_env(afl_environment_variables[i]) ? 1 : 0;
+
           } else if (!strncmp(env, "AFL_CUSTOM_MUTATOR_ONLY",
 
                               afl_environment_variable_len)) {
@@ -299,6 +321,13 @@ void read_afl_environment(afl_state_t *afl, char **envp) {
                               afl_environment_variable_len)) {
 
             afl->afl_env.afl_ignore_problems =
+                get_afl_env(afl_environment_variables[i]) ? 1 : 0;
+
+          } else if (!strncmp(env, "AFL_IGNORE_SEED_PROBLEMS",
+
+                              afl_environment_variable_len)) {
+
+            afl->afl_env.afl_ignore_seed_problems =
                 get_afl_env(afl_environment_variables[i]) ? 1 : 0;
 
           } else if (!strncmp(env, "AFL_IGNORE_TIMEOUTS",

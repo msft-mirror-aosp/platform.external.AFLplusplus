@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -98,12 +98,27 @@ void set_sanitizer_defaults() {
   }
 
   /* LSAN does not support abort_on_error=1. (is this still true??) */
+  u8 should_detect_leaks = 0;
 
   if (!have_lsan_options) {
 
     u8 buf[2048] = "";
     if (!have_san_options) { strcpy(buf, default_options); }
-    strcat(buf, "exitcode=" STRINGIFY(LSAN_ERROR) ":fast_unwind_on_malloc=0:print_suppressions=0:detect_leaks=1:malloc_context_size=30:");
+    if (have_asan_options) {
+
+      if (NULL != strstr(have_asan_options, "detect_leaks=0")) {
+
+        strcat(buf, "exitcode=" STRINGIFY(LSAN_ERROR) ":fast_unwind_on_malloc=0:print_suppressions=0:detect_leaks=0:malloc_context_size=0:");
+
+      } else {
+
+        should_detect_leaks = 1;
+        strcat(buf, "exitcode=" STRINGIFY(LSAN_ERROR) ":fast_unwind_on_malloc=0:print_suppressions=0:detect_leaks=1:malloc_context_size=30:");
+
+      }
+
+    }
+
     setenv("LSAN_OPTIONS", buf, 1);
 
   }
@@ -112,7 +127,15 @@ void set_sanitizer_defaults() {
 
   if (!have_lsan_options) {
 
-    strcat(default_options, "detect_leaks=0:malloc_context_size=0:");
+    if (should_detect_leaks) {
+
+      strcat(default_options, "detect_leaks=1:malloc_context_size=30:");
+
+    } else {
+
+      strcat(default_options, "detect_leaks=0:malloc_context_size=0:");
+
+    }
 
   }
 
@@ -403,7 +426,7 @@ u8 *find_binary(u8 *fname) {
 
           FATAL(
               "Unexpected overflow when processing ENV. This should never "
-              "happend.");
+              "had happened.");
 
         }
 
@@ -1291,6 +1314,35 @@ u8 *u_stringify_time_diff(u8 *buf, u64 cur_ms, u64 event_ms) {
 
     u_stringify_int(val_buf, t_d);
     sprintf(buf, "%s days, %d hrs, %d min, %d sec", val_buf, t_h, t_m, t_s);
+
+  }
+
+  return buf;
+
+}
+
+/* Unsafe describe time delta as simple string.
+   Returns a pointer to buf for convenience. */
+
+u8 *u_simplestring_time_diff(u8 *buf, u64 cur_ms, u64 event_ms) {
+
+  if (!event_ms) {
+
+    sprintf(buf, "00:00:00");
+
+  } else {
+
+    u64 delta;
+    s32 t_d, t_h, t_m, t_s;
+
+    delta = cur_ms - event_ms;
+
+    t_d = delta / 1000 / 60 / 60 / 24;
+    t_h = (delta / 1000 / 60 / 60) % 24;
+    t_m = (delta / 1000 / 60) % 60;
+    t_s = (delta / 1000) % 60;
+
+    sprintf(buf, "%d:%02d:%02d:%02d", t_d, t_h, t_m, t_s);
 
   }
 
