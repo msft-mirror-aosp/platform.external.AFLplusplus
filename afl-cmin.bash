@@ -7,7 +7,7 @@
 #
 # Copyright 2014, 2015 Google Inc. All rights reserved.
 #
-# Copyright 2019-2023 AFLplusplus
+# Copyright 2019-2024 AFLplusplus
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -167,29 +167,28 @@ fi
 # Do a sanity check to discourage the use of /tmp, since we can't really
 # handle this safely from a shell script.
 
-#if [ "$AFL_ALLOW_TMP" = "" ]; then
-#
-#  echo "$IN_DIR" | grep -qE '^(/var)?/tmp/'
-#  T1="$?"
-#
-#  echo "$TARGET_BIN" | grep -qE '^(/var)?/tmp/'
-#  T2="$?"
-#
-#  echo "$OUT_DIR" | grep -qE '^(/var)?/tmp/'
-#  T3="$?"
-#
-#  echo "$STDIN_FILE" | grep -qE '^(/var)?/tmp/'
-#  T4="$?"
-#
-#  echo "$PWD" | grep -qE '^(/var)?/tmp/'
-#  T5="$?"
-#
-#  if [ "$T1" = "0" -o "$T2" = "0" -o "$T3" = "0" -o "$T4" = "0" -o "$T5" = "0" ]; then
-#    echo "[-] Error: do not use this script in /tmp or /var/tmp." 1>&2
-#    exit 1
-#  fi
-#
-#fi
+if [ "$AFL_ALLOW_TMP" = "" ]; then
+
+  echo "$IN_DIR" | grep -qE '^(/var)?/tmp/'
+  T1="$?"
+
+  echo "$TARGET_BIN" | grep -qE '^(/var)?/tmp/'
+  T2="$?"
+
+  echo "$OUT_DIR" | grep -qE '^(/var)?/tmp/'
+  T3="$?"
+
+  echo "$STDIN_FILE" | grep -qE '^(/var)?/tmp/'
+  T4="$?"
+
+  echo "$PWD" | grep -qE '^(/var)?/tmp/'
+  T5="$?"
+
+  if [ "$T1" = "0" -o "$T2" = "0" -o "$T3" = "0" -o "$T4" = "0" -o "$T5" = "0" ]; then
+    echo "[-] Warning: do not use this script in /tmp or /var/tmp for security reasons." 1>&2
+  fi
+
+fi
 
 # If @@ is specified, but there's no -f, let's come up with a temporary input
 # file name.
@@ -339,6 +338,13 @@ fi
 echo "[*] Are you aware that afl-cmin is faster than this afl-cmin.bash script?"
 echo "[+] Found $IN_COUNT files for minimizing."
 
+if [ -n "$THREADS" ]; then
+  if [ "$IN_COUNT" -lt "$THREADS" ]; then
+    THREADS=$IN_COUNT
+    echo "[!] WARNING: less inputs than threads, reducing threads to $THREADS and likely the overhead of threading makes things slower..."
+  fi
+fi
+
 FIRST_FILE=`ls "$IN_DIR" | head -1`
 
 # Make sure that we're not dealing with a directory.
@@ -416,10 +422,14 @@ if [ "$THREADS" = "" ]; then
 
     ls "$IN_DIR" | while read -r fn; do
 
-      CUR=$((CUR+1))
-      printf "\\r    Processing file $CUR/$IN_COUNT... "
+      if [ -s "$IN_DIR/$fn" ]; then
 
-      "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -- "$@" <"$IN_DIR/$fn"
+        CUR=$((CUR+1))
+        printf "\\r    Processing file $CUR/$IN_COUNT... "
+
+        "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -- "$@" <"$IN_DIR/$fn"
+      
+      fi
 
     done
 
@@ -427,11 +437,15 @@ if [ "$THREADS" = "" ]; then
 
     ls "$IN_DIR" | while read -r fn; do
 
-      CUR=$((CUR+1))
-      printf "\\r    Processing file $CUR/$IN_COUNT... "
+      if [ -s "$IN_DIR/$fn" ]; then
 
-      cp "$IN_DIR/$fn" "$STDIN_FILE"
-      "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -H "$STDIN_FILE" -- "$@" </dev/null
+        CUR=$((CUR+1))
+        printf "\\r    Processing file $CUR/$IN_COUNT... "
+
+        cp "$IN_DIR/$fn" "$STDIN_FILE"
+        "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -H "$STDIN_FILE" -- "$@" </dev/null
+
+      fi
 
     done
 
@@ -453,19 +467,26 @@ else
 
     cat $inputs | while read -r fn; do
 
-      "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -- "$@" <"$IN_DIR/$fn"
+      if [ -s "$IN_DIR/$fn" ]; then
+
+        "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -- "$@" <"$IN_DIR/$fn"
+
+      fi
 
     done
 
   else
 
-    STDIN_FILE="$inputs.$$"
-    cat $inputs | while read -r fn; do
+    if [ -s "$IN_DIR/$fn" ]; then
+      STDIN_FILE="$inputs.$$"
+      cat $inputs | while read -r fn; do
 
-      cp "$IN_DIR/$fn" "$STDIN_FILE"
-      "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -H "$STDIN_FILE" -- "$@" </dev/null
+        cp "$IN_DIR/$fn" "$STDIN_FILE"
+        "$SHOWMAP" -m "$MEM_LIMIT" -t "$TIMEOUT" -o "$TRACE_DIR/$fn" -Z $EXTRA_PAR -H "$STDIN_FILE" -- "$@" </dev/null
 
-    done
+      done
+
+    fi
 
   fi
 
@@ -479,7 +500,7 @@ else
   echo "[+] all $THREADS running tasks completed."
   rm -f ${TMPFILE}*
 
-  echo trace dir files: $(ls $TRACE_DIR/*|wc -l)
+  #echo trace dir files: $(ls $TRACE_DIR/*|wc -l)
 
 fi
 
@@ -522,6 +543,8 @@ ls -rS "$IN_DIR" | while read -r fn; do
   printf "\\r    Processing file $CUR/$IN_COUNT... "
 
   sed "s#\$# $fn#" "$TRACE_DIR/$fn" >>"$TRACE_DIR/.candidate_list"
+
+  test -s "$TRACE_DIR/$fn" || echo Warning: $fn is ignored because of crashing the target
 
 done
 

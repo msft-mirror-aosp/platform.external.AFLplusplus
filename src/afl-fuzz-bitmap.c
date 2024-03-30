@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -459,6 +459,17 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
   if (unlikely(fault == FSRV_RUN_TMOUT && afl->afl_env.afl_ignore_timeouts)) {
 
+    if (likely(afl->schedule >= FAST && afl->schedule <= RARE)) {
+
+      classify_counts(&afl->fsrv);
+      u64 cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
+
+      // Saturated increment
+      if (likely(afl->n_fuzz[cksum % N_FUZZ_SIZE] < 0xFFFFFFFF))
+        afl->n_fuzz[cksum % N_FUZZ_SIZE]++;
+
+    }
+
     return 0;
 
   }
@@ -474,7 +485,7 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
   /* Generating a hash on every input is super expensive. Bad idea and should
      only be used for special schedules */
-  if (unlikely(afl->schedule >= FAST && afl->schedule <= RARE)) {
+  if (likely(afl->schedule >= FAST && afl->schedule <= RARE)) {
 
     classify_counts(&afl->fsrv);
     classified = 1;
@@ -532,6 +543,19 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
     ck_write(fd, mem, len, queue_fn);
     close(fd);
     add_to_queue(afl, queue_fn, len, 0);
+
+    if (unlikely(afl->fuzz_mode) &&
+        likely(afl->switch_fuzz_mode && !afl->non_instrumented_mode)) {
+
+      if (afl->afl_env.afl_no_ui) {
+
+        ACTF("New coverage found, switching back to exploration mode.");
+
+      }
+
+      afl->fuzz_mode = 0;
+
+    }
 
 #ifdef INTROSPECTION
     if (afl->custom_mutators_count && afl->current_custom_fuzz) {
@@ -853,7 +877,8 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
     if (unlikely(fd < 0)) { PFATAL("Unable to create '%s'", fn_log); }
 
     u32 nyx_aux_string_len = afl->fsrv.nyx_handlers->nyx_get_aux_string(
-        afl->fsrv.nyx_runner, afl->fsrv.nyx_aux_string, 0x1000);
+        afl->fsrv.nyx_runner, afl->fsrv.nyx_aux_string,
+        afl->fsrv.nyx_aux_string_len);
 
     ck_write(fd, afl->fsrv.nyx_aux_string, nyx_aux_string_len, fn_log);
     close(fd);
