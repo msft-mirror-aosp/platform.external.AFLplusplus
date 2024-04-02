@@ -3,7 +3,7 @@
    Copyright 2014-2019 Free Software Foundation, Inc
    Copyright 2015, 2016 Google Inc. All rights reserved.
    Copyright 2019-2020 AFLplusplus Project. All rights reserved.
-   Copyright 2019-2023 AdaCore
+   Copyright 2019-2024 AdaCore
 
    Written by Alexandre Oliva <oliva@adacore.com>, based on the AFL++
    LLVM CmpLog Routines pass by Andrea Fioraldi
@@ -157,6 +157,9 @@ struct afl_cmptrs_pass : afl_base_pass {
     /* We expect it to be a record type.  */
     if (TREE_CODE(t) != RECORD_TYPE) return false;
 
+    /* The type has an identifier.  */
+    if (!TYPE_IDENTIFIER(t)) return false;
+
     /* The type of the template is basic_string.  */
     if (strcmp(IDENTIFIER_POINTER(TYPE_IDENTIFIER(t)), "basic_string") != 0)
       return false;
@@ -201,7 +204,7 @@ struct afl_cmptrs_pass : afl_base_pass {
     /* Now go back to the first data member.  Its type should be a
        record type named _Alloc_hider.  */
     c = TREE_TYPE(c);
-    if (!c || TREE_CODE(c) != RECORD_TYPE ||
+    if (!c || TREE_CODE(c) != RECORD_TYPE || !TYPE_IDENTIFIER(t) ||
         strcmp(IDENTIFIER_POINTER(TYPE_IDENTIFIER(c)), "_Alloc_hider") != 0)
       return false;
 

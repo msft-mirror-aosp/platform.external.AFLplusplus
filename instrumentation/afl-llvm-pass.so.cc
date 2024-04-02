@@ -12,7 +12,7 @@
    NGRAM previous location coverage comes from Adrian Herrera.
 
    Copyright 2015, 2016 Google Inc. All rights reserved.
-   Copyright 2019-2023 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -552,7 +552,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 #endif
         {
 
-          // load the context ID of the previous function and write to to a
+          // load the context ID of the previous function and write to a
           // local variable on the stack
           LoadInst *PrevCtxLoad = IRB.CreateLoad(
 #if LLVM_VERSION_MAJOR >= 14
@@ -634,7 +634,7 @@ bool AFLCoverage::runOnModule(Module &M) {
 
 /* There is a problem with Ubuntu 18.04 and llvm 6.0 (see issue #63).
    The inline function successors() is not inlined and also not found at runtime
-   :-( As I am unable to detect Ubuntu18.04 heree, the next best thing is to
+   :-( As I am unable to detect Ubuntu18.04 here, the next best thing is to
    disable this optional optimization for LLVM 6.0.0 and Linux */
 #if !(LLVM_VERSION_MAJOR == 6 && LLVM_VERSION_MINOR == 0) || !defined __linux__
       // only instrument if this basic block is the destination of a previous
