@@ -12,6 +12,7 @@
 #include <list>
 #include <string>
 #include <fstream>
+#include <cmath>
 
 #include <llvm/Support/raw_ostream.h>
 
@@ -96,11 +97,15 @@ bool isIgnoreFunction(const llvm::Function *F) {
 
   static constexpr const char *ignoreSubstringList[] = {
 
-      "__asan", "__msan",       "__ubsan",    "__lsan",  "__san", "__sanitize",
-      "__cxx",  "DebugCounter", "DwarfDebug", "DebugLoc"
+      "__asan",     "__msan",       "__ubsan",    "__lsan",  "__san",
+      "__sanitize", "DebugCounter", "DwarfDebug", "DebugLoc"
 
   };
 
+  // This check is very sensitive, we must be sure to not include patterns
+  // that are part of user-written C++ functions like the ones including
+  // std::string as parameter (see #1927) as the mangled type is inserted in the
+  // mangled name of the user-written function
   for (auto const &ignoreListFunc : ignoreSubstringList) {
 
     // hexcoder: F->getName().contains() not avaiilable in llvm 3.8.0
@@ -196,7 +201,7 @@ void initInstrumentList() {
 
     if (debug)
       DEBUGF("loaded allowlist with %zu file and %zu function entries\n",
-             allowListFiles.size(), allowListFunctions.size());
+             allowListFiles.size() / 4, allowListFunctions.size() / 4);
 
   }
 
@@ -271,7 +276,7 @@ void initInstrumentList() {
 
     if (debug)
       DEBUGF("loaded denylist with %zu file and %zu function entries\n",
-             denyListFiles.size(), denyListFunctions.size());
+             denyListFiles.size() / 4, denyListFunctions.size() / 4);
 
   }
 
@@ -288,10 +293,11 @@ void scanForDangerousFunctions(llvm::Module *M) {
 
     StringRef ifunc_name = IF.getName();
     Constant *r = IF.getResolver();
+    if (r->getNumOperands() == 0) { continue; }
     StringRef r_name = cast<Function>(r->getOperand(0))->getName();
     if (!be_quiet)
       fprintf(stderr,
-              "Info: Found an ifunc with name %s that points to resolver "
+              "Note: Found an ifunc with name %s that points to resolver "
               "function %s, we will not instrument this, putting it into the "
               "block list.\n",
               ifunc_name.str().c_str(), r_name.str().c_str());
@@ -329,7 +335,7 @@ void scanForDangerousFunctions(llvm::Module *M) {
 
                 if (!be_quiet)
                   fprintf(stderr,
-                          "Info: Found constructor function %s with prio "
+                          "Note: Found constructor function %s with prio "
                           "%u, we will not instrument this, putting it into a "
                           "block list.\n",
                           F->getName().str().c_str(), Priority);
@@ -582,7 +588,7 @@ bool isInInstrumentList(llvm::Function *F, std::string Filename) {
 }
 
 // Calculate the number of average collisions that would occur if all
-// location IDs would be assigned randomly (like normal afl/afl++).
+// location IDs would be assigned randomly (like normal afl/AFL++).
 // This uses the "balls in bins" algorithm.
 unsigned long long int calculateCollisions(uint32_t edges) {
 

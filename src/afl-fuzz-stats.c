@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -26,6 +26,50 @@
 #include "afl-fuzz.h"
 #include "envs.h"
 #include <limits.h>
+
+static char fuzzing_state[4][12] = {"started :-)", "in progress", "final phase",
+                                    "finished..."};
+
+char *get_fuzzing_state(afl_state_t *afl) {
+
+  u64 cur_ms = get_cur_time();
+  u64 last_find = cur_ms - afl->last_find_time;
+  u64 cur_run_time = cur_ms - afl->start_time;
+  u64 cur_total_run_time = afl->prev_run_time + cur_run_time;
+
+  if (unlikely(afl->non_instrumented_mode)) {
+
+    return fuzzing_state[1];
+
+  } else if (unlikely(cur_run_time < 60 * 3 * 1000 ||
+
+                      cur_total_run_time < 60 * 5 * 1000)) {
+
+    return fuzzing_state[0];
+
+  } else {
+
+    u64 last_find_100 = 100 * last_find;
+    u64 percent_cur = last_find_100 / cur_run_time;
+    u64 percent_total = last_find_100 / cur_total_run_time;
+
+    if (unlikely(percent_cur >= 80 && percent_total >= 80)) {
+
+      return fuzzing_state[3];
+
+    } else if (unlikely(percent_cur >= 55 && percent_total >= 55)) {
+
+      return fuzzing_state[2];
+
+    } else {
+
+      return fuzzing_state[1];
+
+    }
+
+  }
+
+}
 
 /* Write fuzzer setup file */
 
@@ -59,10 +103,10 @@ void write_setup_file(afl_state_t *afl, u32 argc, char **argv) {
 
     if (i) fprintf(f, " ");
 #ifdef __ANDROID__
-    if (memchr(argv[i], '\'', sizeof(argv[i]))) {
+    if (memchr(argv[i], '\'', strlen(argv[i]))) {
 
 #else
-    if (index(argv[i], '\'')) {
+    if (strchr(argv[i], '\'')) {
 
 #endif
 
@@ -94,7 +138,7 @@ void load_stats_file(afl_state_t *afl) {
 
   FILE *f;
   u8    buf[MAX_LINE];
-  u8 *  lptr;
+  u8   *lptr;
   u8    fn[PATH_MAX];
   u32   lineno = 0;
   snprintf(fn, PATH_MAX, "%s/fuzzer_stats", afl->out_dir);
@@ -206,11 +250,13 @@ void write_stats_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
 #endif
 
   u64   cur_time = get_cur_time();
-  u8    fn[PATH_MAX];
+  u8    fn_tmp[PATH_MAX];
+  u8    fn_final[PATH_MAX];
   FILE *f;
 
-  snprintf(fn, PATH_MAX, "%s/fuzzer_stats", afl->out_dir);
-  f = create_ffile(fn);
+  snprintf(fn_tmp, PATH_MAX, "%s/.fuzzer_stats_tmp", afl->out_dir);
+  snprintf(fn_final, PATH_MAX, "%s/fuzzer_stats", afl->out_dir);
+  f = create_ffile(fn_tmp);
 
   /* Keep last values in case we're called from another context
      where exec/sec stats and such are not readily available. */
@@ -242,6 +288,8 @@ void write_stats_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
 #ifndef __HAIKU__
   if (getrusage(RUSAGE_CHILDREN, &rus)) { rus.ru_maxrss = 0; }
 #endif
+  u64 runtime = afl->prev_run_time + cur_time - afl->start_time;
+  if (!runtime) { runtime = 1; }
 
   fprintf(
       f,
@@ -251,6 +299,7 @@ void write_stats_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
       "fuzzer_pid        : %u\n"
       "cycles_done       : %llu\n"
       "cycles_wo_finds   : %llu\n"
+      "time_wo_finds     : %llu\n"
       "execs_done        : %llu\n"
       "execs_per_sec     : %0.02f\n"
       "execs_ps_last_min : %0.02f\n"
@@ -289,12 +338,14 @@ void write_stats_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
       "target_mode       : %s%s%s%s%s%s%s%s%s%s\n"
       "command_line      : %s\n",
       (afl->start_time - afl->prev_run_time) / 1000, cur_time / 1000,
-      (afl->prev_run_time + cur_time - afl->start_time) / 1000, (u32)getpid(),
+      runtime / 1000, (u32)getpid(),
       afl->queue_cycle ? (afl->queue_cycle - 1) : 0, afl->cycles_wo_finds,
-      afl->fsrv.total_execs,
-      afl->fsrv.total_execs /
-          ((double)(afl->prev_run_time + get_cur_time() - afl->start_time) /
-           1000),
+      afl->longest_find_time > cur_time - afl->last_find_time
+          ? afl->longest_find_time / 1000
+          : ((afl->start_time == 0 || afl->last_find_time == 0)
+                 ? 0
+                 : (cur_time - afl->last_find_time) / 1000),
+      afl->fsrv.total_execs, afl->fsrv.total_execs / ((double)(runtime) / 1000),
       afl->last_avg_execs_saved, afl->queued_items, afl->queued_favored,
       afl->queued_discovered, afl->queued_imported, afl->queued_variable,
       afl->max_depth, afl->current_entry, afl->pending_favored,
@@ -362,8 +413,42 @@ void write_stats_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
   }
 
   fclose(f);
+  rename(fn_tmp, fn_final);
 
 }
+
+#ifdef INTROSPECTION
+void write_queue_stats(afl_state_t *afl) {
+
+  FILE *f;
+  u8   *fn = alloc_printf("%s/queue_data", afl->out_dir);
+  if ((f = fopen(fn, "w")) != NULL) {
+
+    u32 id;
+    fprintf(f,
+            "# filename, length, exec_us, selected, skipped, mutations, finds, "
+            "crashes, timeouts, bitmap_size, perf_score, weight, colorized, "
+            "favored, disabled\n");
+    for (id = 0; id < afl->queued_items; ++id) {
+
+      struct queue_entry *q = afl->queue_buf[id];
+      fprintf(f, "\"%s\",%u,%llu,%u,%u,%llu,%u,%u,%u,%u,%.3f,%.3f,%u,%u,%u\n",
+              q->fname, q->len, q->exec_us, q->stats_selected, q->stats_skipped,
+              q->stats_mutated, q->stats_finds, q->stats_crashes,
+              q->stats_tmouts, q->bitmap_size, q->perf_score, q->weight,
+              q->colorized, q->favored, q->disabled);
+
+    }
+
+    fclose(f);
+
+  }
+
+  ck_free(fn);
+
+}
+
+#endif
 
 /* Update the plot file if there is a reason to. */
 
@@ -414,6 +499,44 @@ void maybe_update_plot_file(afl_state_t *afl, u32 t_bytes, double bitmap_cvg,
           afl->plot_prev_ed, t_bytes);                     /* ignore errors */
 
   fflush(afl->fsrv.plot_file);
+
+}
+
+/* Log deterministic stage efficiency */
+
+void plot_profile_data(afl_state_t *afl, struct queue_entry *q) {
+
+  u64 current_ms = get_cur_time() - afl->start_time;
+
+  u32    current_edges = count_non_255_bytes(afl, afl->virgin_bits);
+  double det_finding_rate = (double)afl->havoc_prof->total_det_edge * 100.0 /
+                            (double)current_edges,
+         det_time_rate = (double)afl->havoc_prof->total_det_time * 100.0 /
+                         (double)current_ms;
+
+  u32 ndet_bits = 0;
+  for (u32 i = 0; i < afl->fsrv.map_size; i++) {
+
+    if (afl->skipdet_g->virgin_det_bits[i]) ndet_bits += 1;
+
+  }
+
+  double det_fuzzed_rate = (double)ndet_bits * 100.0 / (double)current_edges;
+
+  fprintf(afl->fsrv.det_plot_file,
+          "[%02lld:%02lld:%02lld] fuzz %d (%d), find %d/%d among %d(%02.2f) "
+          "and spend %lld/%lld(%02.2f), cover %02.2f yet, %d/%d undet bits, "
+          "continue %d.\n",
+          current_ms / 1000 / 3600, (current_ms / 1000 / 60) % 60,
+          (current_ms / 1000) % 60, afl->current_entry, q->fuzz_level,
+          afl->havoc_prof->edge_det_stage, afl->havoc_prof->edge_havoc_stage,
+          current_edges, det_finding_rate,
+          afl->havoc_prof->det_stage_time / 1000,
+          afl->havoc_prof->havoc_stage_time / 1000, det_time_rate,
+          det_fuzzed_rate, q->skipdet_e->undet_bits,
+          afl->skipdet_g->undet_bits_threshold, q->skipdet_e->continue_inf);
+
+  fflush(afl->fsrv.det_plot_file);
 
 }
 
@@ -578,9 +701,10 @@ void show_stats_normal(afl_state_t *afl) {
 
   /* Roughly every minute, update fuzzer stats and save auto tokens. */
 
-  if (unlikely(!afl->non_instrumented_mode &&
-               (afl->force_ui_update ||
-                cur_ms - afl->stats_last_stats_ms > STATS_UPDATE_SEC * 1000))) {
+  if (unlikely(
+          !afl->non_instrumented_mode &&
+          (afl->force_ui_update || cur_ms - afl->stats_last_stats_ms >
+                                       afl->stats_file_update_freq_msecs))) {
 
     afl->stats_last_stats_ms = cur_ms;
     write_stats_file(afl, t_bytes, t_byte_ratio, stab_ratio,
@@ -613,6 +737,18 @@ void show_stats_normal(afl_state_t *afl) {
 
   }
 
+  /* Every now and then, write queue data. */
+
+  if (unlikely(afl->force_ui_update ||
+               cur_ms - afl->stats_last_queue_ms > QUEUE_UPDATE_SEC * 1000)) {
+
+    afl->stats_last_queue_ms = cur_ms;
+#ifdef INTROSPECTION
+    write_queue_stats(afl);
+#endif
+
+  }
+
   /* Honor AFL_EXIT_WHEN_DONE and AFL_BENCH_UNTIL_CRASH. */
 
   if (unlikely(!afl->non_instrumented_mode && afl->cycles_wo_finds > 100 &&
@@ -624,9 +760,14 @@ void show_stats_normal(afl_state_t *afl) {
 
   /* AFL_EXIT_ON_TIME. */
 
-  if (unlikely(afl->last_find_time && !afl->non_instrumented_mode &&
-               afl->afl_env.afl_exit_on_time &&
-               (cur_ms - afl->last_find_time) > afl->exit_on_time)) {
+  /* If no coverage was found yet, check whether run time is greater than
+   * exit_on_time. */
+
+  if (unlikely(!afl->non_instrumented_mode && afl->afl_env.afl_exit_on_time &&
+               ((afl->last_find_time &&
+                 (cur_ms - afl->last_find_time) > afl->exit_on_time) ||
+                (!afl->last_find_time &&
+                 (cur_ms - afl->start_time) > afl->exit_on_time)))) {
 
     afl->stop_soon = 2;
 
@@ -677,10 +818,29 @@ void show_stats_normal(afl_state_t *afl) {
   if (unlikely(!banner[0])) {
 
     char *si = "";
+    char *fuzzer_name;
+
     if (afl->sync_id) { si = afl->sync_id; }
     memset(banner, 0, sizeof(banner));
-    banner_len = (afl->crash_mode ? 20 : 18) + strlen(VERSION) + strlen(si) +
-                 strlen(afl->power_name) + 4 + 6;
+
+    banner_len = strlen(VERSION) + strlen(si) + strlen(afl->power_name) + 4 + 6;
+
+    if (afl->crash_mode) {
+
+      fuzzer_name = "peruvian were-rabbit";
+
+    } else {
+
+      fuzzer_name = "american fuzzy lop";
+      if (banner_len + strlen(fuzzer_name) + strlen(afl->use_banner) > 75) {
+
+        fuzzer_name = "AFL";
+
+      }
+
+    }
+
+    banner_len += strlen(fuzzer_name);
 
     if (strlen(afl->use_banner) + banner_len > 75) {
 
@@ -696,20 +856,19 @@ void show_stats_normal(afl_state_t *afl) {
 #ifdef __linux__
     if (afl->fsrv.nyx_mode) {
 
-      sprintf(banner + banner_pad,
-              "%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s] - Nyx",
-              afl->crash_mode ? cPIN "peruvian were-rabbit"
-                              : cYEL "american fuzzy lop",
-              si, afl->use_banner, afl->power_name);
+      snprintf(banner + banner_pad, sizeof(banner) - banner_pad,
+               "%s%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN
+               "[%s] - Nyx",
+               afl->crash_mode ? cPIN : cYEL, fuzzer_name, si, afl->use_banner,
+               afl->power_name);
 
     } else {
 
 #endif
-      sprintf(banner + banner_pad,
-              "%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s]",
-              afl->crash_mode ? cPIN "peruvian were-rabbit"
-                              : cYEL "american fuzzy lop",
-              si, afl->use_banner, afl->power_name);
+      snprintf(banner + banner_pad, sizeof(banner) - banner_pad,
+               "%s%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s]",
+               afl->crash_mode ? cPIN : cYEL, fuzzer_name, si, afl->use_banner,
+               afl->power_name);
 
 #ifdef __linux__
 
@@ -761,26 +920,26 @@ void show_stats_normal(afl_state_t *afl) {
 
     } else
 
-        /* Subsequent cycles, but we're still making finds. */
-        if (afl->cycles_wo_finds < 25 || min_wo_finds < 30) {
+      /* Subsequent cycles, but we're still making finds. */
+      if (afl->cycles_wo_finds < 25 || min_wo_finds < 30) {
 
-      strcpy(tmp, cYEL);
+        strcpy(tmp, cYEL);
 
-    } else
+      } else
 
         /* No finds for a long time and no test cases to try. */
         if (afl->cycles_wo_finds > 100 && !afl->pending_not_fuzzed &&
             min_wo_finds > 120) {
 
-      strcpy(tmp, cLGN);
+          strcpy(tmp, cLGN);
 
-      /* Default: cautiously OK to stop? */
+          /* Default: cautiously OK to stop? */
 
-    } else {
+        } else {
 
-      strcpy(tmp, cLBL);
+          strcpy(tmp, cLBL);
 
-    }
+        }
 
   }
 
@@ -938,7 +1097,7 @@ void show_stats_normal(afl_state_t *afl) {
 
   sprintf(tmp, "%s (%s%s saved)", u_stringify_int(IB(0), afl->total_tmouts),
           u_stringify_int(IB(1), afl->saved_tmouts),
-          (afl->saved_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+          (afl->saved_tmouts >= KEEP_UNIQUE_HANG) ? "+" : "");
 
   SAYF(bSTG bV bSTOP "  total tmouts : " cRST "%-20s" bSTG bV "\n", tmp);
 
@@ -1225,7 +1384,11 @@ void show_stats_normal(afl_state_t *afl) {
   }
 
   /* Last line */
-  SAYF(SET_G1 "\n" bSTG bLB bH30 bH20 bH2 bRB bSTOP cRST RESET_G1);
+
+  SAYF(SET_G1 "\n" bSTG bLB bH cCYA          bSTOP " strategy:" cPIN
+              " %s " bSTG bH10 cCYA          bSTOP " state:" cPIN
+              " %s " bSTG bH2 bRB bSTOP cRST RESET_G1,
+       afl->fuzz_mode == 0 ? "explore" : "exploit", get_fuzzing_state(afl));
 
 #undef IB
 
@@ -1399,6 +1562,18 @@ void show_stats_pizza(afl_state_t *afl) {
 
   }
 
+  /* Every now and then, write queue data. */
+
+  if (unlikely(afl->force_ui_update ||
+               cur_ms - afl->stats_last_queue_ms > QUEUE_UPDATE_SEC * 1000)) {
+
+    afl->stats_last_queue_ms = cur_ms;
+#ifdef INTROSPECTION
+    write_queue_stats(afl);
+#endif
+
+  }
+
   /* Honor AFL_EXIT_WHEN_DONE and AFL_BENCH_UNTIL_CRASH. */
 
   if (unlikely(!afl->non_instrumented_mode && afl->cycles_wo_finds > 100 &&
@@ -1410,9 +1585,14 @@ void show_stats_pizza(afl_state_t *afl) {
 
   /* AFL_EXIT_ON_TIME. */
 
-  if (unlikely(afl->last_find_time && !afl->non_instrumented_mode &&
-               afl->afl_env.afl_exit_on_time &&
-               (cur_ms - afl->last_find_time) > afl->exit_on_time)) {
+  /* If no coverage was found yet, check whether run time is greater than
+   * exit_on_time. */
+
+  if (unlikely(!afl->non_instrumented_mode && afl->afl_env.afl_exit_on_time &&
+               ((afl->last_find_time &&
+                 (cur_ms - afl->last_find_time) > afl->exit_on_time) ||
+                (!afl->last_find_time &&
+                 (cur_ms - afl->start_time) > afl->exit_on_time)))) {
 
     afl->stop_soon = 2;
 
@@ -1483,20 +1663,22 @@ void show_stats_pizza(afl_state_t *afl) {
 #ifdef __linux__
     if (afl->fsrv.nyx_mode) {
 
-      sprintf(banner + banner_pad,
-              "%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s] - Nyx",
-              afl->crash_mode ? cPIN "Mozzarbella Pizzeria table booking system"
-                              : cYEL "Mozzarbella Pizzeria management system",
-              si, afl->use_banner, afl->power_name);
+      snprintf(banner + banner_pad, sizeof(banner) - banner_pad,
+               "%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s] - Nyx",
+               afl->crash_mode ? cPIN
+                   "Mozzarbella Pizzeria table booking system"
+                               : cYEL "Mozzarbella Pizzeria management system",
+               si, afl->use_banner, afl->power_name);
 
     } else {
 
 #endif
-      sprintf(banner + banner_pad,
-              "%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s]",
-              afl->crash_mode ? cPIN "Mozzarbella Pizzeria table booking system"
-                              : cYEL "Mozzarbella Pizzeria management system",
-              si, afl->use_banner, afl->power_name);
+      snprintf(banner + banner_pad, sizeof(banner) - banner_pad,
+               "%s " cLCY VERSION cLBL " {%s} " cLGN "(%s) " cPIN "[%s]",
+               afl->crash_mode ? cPIN
+                   "Mozzarbella Pizzeria table booking system"
+                               : cYEL "Mozzarbella Pizzeria management system",
+               si, afl->use_banner, afl->power_name);
 
 #ifdef __linux__
 
@@ -1548,26 +1730,26 @@ void show_stats_pizza(afl_state_t *afl) {
 
     } else
 
-        /* Subsequent cycles, but we're still making finds. */
-        if (afl->cycles_wo_finds < 25 || min_wo_finds < 30) {
+      /* Subsequent cycles, but we're still making finds. */
+      if (afl->cycles_wo_finds < 25 || min_wo_finds < 30) {
 
-      strcpy(tmp, cYEL);
+        strcpy(tmp, cYEL);
 
-    } else
+      } else
 
         /* No finds for a long time and no test cases to try. */
         if (afl->cycles_wo_finds > 100 && !afl->pending_not_fuzzed &&
             min_wo_finds > 120) {
 
-      strcpy(tmp, cLGN);
+          strcpy(tmp, cLGN);
 
-      /* Default: cautiously OK to stop? */
+          /* Default: cautiously OK to stop? */
 
-    } else {
+        } else {
 
-      strcpy(tmp, cLBL);
+          strcpy(tmp, cLBL);
 
-    }
+        }
 
   }
 
@@ -1727,10 +1909,10 @@ void show_stats_pizza(afl_state_t *afl) {
 
   /* Show a warning about slow execution. */
 
-  if (afl->stats_avg_exec < 100) {
+  if (afl->stats_avg_exec < 20) {
 
     sprintf(tmp, "%s/sec (%s)", u_stringify_float(IB(0), afl->stats_avg_exec),
-            afl->stats_avg_exec < 20 ? "zzzz..." : "Gennarino is at it again!");
+            "zzzz...");
 
     SAYF(bV bSTOP "                pizza making speed : " cLRD
                   "%-22s                ",
@@ -1747,7 +1929,7 @@ void show_stats_pizza(afl_state_t *afl) {
 
   sprintf(tmp, "%s (%s%s saved)", u_stringify_int(IB(0), afl->total_tmouts),
           u_stringify_int(IB(1), afl->saved_tmouts),
-          (afl->saved_hangs >= KEEP_UNIQUE_HANG) ? "+" : "");
+          (afl->saved_tmouts >= KEEP_UNIQUE_HANG) ? "+" : "");
 
   SAYF(bSTG bV bSTOP "                    burned pizzas : " cRST "%-20s" bSTG bV
                      "\n",
@@ -2105,7 +2287,9 @@ void show_init_stats(afl_state_t *afl) {
                     ? 50000
                     : 10000)) {
 
-    WARNF(cLRD "The target binary is pretty slow! See %s/perf_tips.md.",
+    WARNF(cLRD
+          "The target binary is pretty slow! See "
+          "%s/fuzzing_in_depth.md#i-improve-the-speed",
           doc_path);
 
   }
@@ -2134,13 +2318,17 @@ void show_init_stats(afl_state_t *afl) {
 
     if (max_len > 50 * 1024) {
 
-      WARNF(cLRD "Some test cases are huge (%s) - see %s/perf_tips.md!",
+      WARNF(cLRD
+            "Some test cases are huge (%s) - see "
+            "%s/fuzzing_in_depth.md#i-improve-the-speed",
             stringify_mem_size(IB(0), max_len), doc_path);
 
     } else if (max_len > 10 * 1024) {
 
-      WARNF("Some test cases are big (%s) - see %s/perf_tips.md.",
-            stringify_mem_size(IB(0), max_len), doc_path);
+      WARNF(
+          "Some test cases are big (%s) - see "
+          "%s/fuzzing_in_depth.md#i-improve-the-speed",
+          stringify_mem_size(IB(0), max_len), doc_path);
 
     }
 
@@ -2178,7 +2366,12 @@ void show_init_stats(afl_state_t *afl) {
       stringify_int(IB(0), min_us), stringify_int(IB(1), max_us),
       stringify_int(IB(2), avg_us));
 
-  if (afl->timeout_given != 1) {
+  if (afl->timeout_given == 3) {
+
+    ACTF("Applying timeout settings from resumed session (%u ms).",
+         afl->fsrv.exec_tmout);
+
+  } else if (afl->timeout_given != 1) {
 
     /* Figure out the appropriate timeout. The basic idea is: 5x average or
        1x max, rounded up to EXEC_TM_ROUND ms and capped at 1 second.
@@ -2219,11 +2412,6 @@ void show_init_stats(afl_state_t *afl) {
          afl->fsrv.exec_tmout);
 
     afl->timeout_given = 1;
-
-  } else if (afl->timeout_given == 3) {
-
-    ACTF("Applying timeout settings from resumed session (%u ms).",
-         afl->fsrv.exec_tmout);
 
   } else {
 
