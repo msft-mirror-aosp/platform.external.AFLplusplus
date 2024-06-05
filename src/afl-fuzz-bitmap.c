@@ -9,7 +9,7 @@
                         Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2016, 2017 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -457,9 +457,27 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
   if (unlikely(len == 0)) { return 0; }
 
+  if (unlikely(fault == FSRV_RUN_TMOUT && afl->afl_env.afl_ignore_timeouts)) {
+
+    if (likely(afl->schedule >= FAST && afl->schedule <= RARE)) {
+
+      classify_counts(&afl->fsrv);
+      u64 cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
+
+      // Saturated increment
+      if (likely(afl->n_fuzz[cksum % N_FUZZ_SIZE] < 0xFFFFFFFF))
+        afl->n_fuzz[cksum % N_FUZZ_SIZE]++;
+
+    }
+
+    return 0;
+
+  }
+
   u8  fn[PATH_MAX];
   u8 *queue_fn = "";
-  u8  new_bits = 0, keeping = 0, res, classified = 0, is_timeout = 0;
+  u8  new_bits = 0, keeping = 0, res, classified = 0, is_timeout = 0,
+     need_hash = 1;
   s32 fd;
   u64 cksum = 0;
 
@@ -467,12 +485,16 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
   /* Generating a hash on every input is super expensive. Bad idea and should
      only be used for special schedules */
-  if (unlikely(afl->schedule >= FAST && afl->schedule <= RARE)) {
+  if (likely(afl->schedule >= FAST && afl->schedule <= RARE)) {
+
+    classify_counts(&afl->fsrv);
+    classified = 1;
+    need_hash = 0;
 
     cksum = hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
 
     /* Saturated increment */
-    if (afl->n_fuzz[cksum % N_FUZZ_SIZE] < 0xFFFFFFFF)
+    if (likely(afl->n_fuzz[cksum % N_FUZZ_SIZE] < 0xFFFFFFFF))
       afl->n_fuzz[cksum % N_FUZZ_SIZE]++;
 
   }
@@ -482,7 +504,17 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
-    new_bits = has_new_bits_unclassified(afl, afl->virgin_bits);
+    if (likely(classified)) {
+
+      new_bits = has_new_bits(afl, afl->virgin_bits);
+
+    } else {
+
+      new_bits = has_new_bits_unclassified(afl, afl->virgin_bits);
+
+      if (unlikely(new_bits)) { classified = 1; }
+
+    }
 
     if (likely(!new_bits)) {
 
@@ -490,8 +522,6 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
       return 0;
 
     }
-
-    classified = new_bits;
 
   save_to_queue:
 
@@ -513,6 +543,19 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
     ck_write(fd, mem, len, queue_fn);
     close(fd);
     add_to_queue(afl, queue_fn, len, 0);
+
+    if (unlikely(afl->fuzz_mode) &&
+        likely(afl->switch_fuzz_mode && !afl->non_instrumented_mode)) {
+
+      if (afl->afl_env.afl_no_ui) {
+
+        ACTF("New coverage found, switching back to exploration mode.");
+
+      }
+
+      afl->fuzz_mode = 0;
+
+    }
 
 #ifdef INTROSPECTION
     if (afl->custom_mutators_count && afl->current_custom_fuzz) {
@@ -550,21 +593,25 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
     }
 
-    /* AFLFast schedule? update the new queue entry */
-    if (cksum) {
+    if (unlikely(need_hash && new_bits)) {
+
+      /* due to classify counts we have to recalculate the checksum */
+      afl->queue_top->exec_cksum =
+          hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
+      need_hash = 0;
+
+    }
+
+    /* For AFLFast schedules we update the new queue entry */
+    if (likely(cksum)) {
 
       afl->queue_top->n_fuzz_entry = cksum % N_FUZZ_SIZE;
       afl->n_fuzz[afl->queue_top->n_fuzz_entry] = 1;
 
     }
 
-    /* due to classify counts we have to recalculate the checksum */
-    afl->queue_top->exec_cksum =
-        hash64(afl->fsrv.trace_bits, afl->fsrv.map_size, HASH_CONST);
-
     /* Try to calibrate inline; this also calls update_bitmap_score() when
        successful. */
-
     res = calibrate_case(afl, afl->queue_top, mem, afl->queue_cycle - 1, 0);
 
     if (unlikely(res == FSRV_RUN_ERROR)) {
@@ -598,7 +645,7 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
       if (likely(!afl->non_instrumented_mode)) {
 
-        if (!classified) {
+        if (unlikely(!classified)) {
 
           classify_counts(&afl->fsrv);
           classified = 1;
@@ -647,8 +694,19 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
       if (afl->fsrv.exec_tmout < afl->hang_tmout) {
 
-        u8 new_fault;
-        len = write_to_testcase(afl, &mem, len, 0);
+        u8  new_fault;
+        u32 tmp_len = write_to_testcase(afl, &mem, len, 0);
+
+        if (likely(tmp_len)) {
+
+          len = tmp_len;
+
+        } else {
+
+          len = write_to_testcase(afl, &mem, len, 1);
+
+        }
+
         new_fault = fuzz_run_target(afl, &afl->fsrv, afl->hang_tmout);
         classify_counts(&afl->fsrv);
 
@@ -712,7 +770,12 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
       if (likely(!afl->non_instrumented_mode)) {
 
-        if (!classified) { classify_counts(&afl->fsrv); }
+        if (unlikely(!classified)) {
+
+          classify_counts(&afl->fsrv);
+          classified = 1;
+
+        }
 
         simplify_trace(afl, afl->fsrv.trace_bits);
 
@@ -720,7 +783,12 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
 
       }
 
-      if (unlikely(!afl->saved_crashes)) { write_crash_readme(afl); }
+      if (unlikely(!afl->saved_crashes) &&
+          (afl->afl_env.afl_no_crash_readme != 1)) {
+
+        write_crash_readme(afl);
+
+      }
 
 #ifndef SIMPLE_FILES
 
@@ -809,7 +877,8 @@ save_if_interesting(afl_state_t *afl, void *mem, u32 len, u8 fault) {
     if (unlikely(fd < 0)) { PFATAL("Unable to create '%s'", fn_log); }
 
     u32 nyx_aux_string_len = afl->fsrv.nyx_handlers->nyx_get_aux_string(
-        afl->fsrv.nyx_runner, afl->fsrv.nyx_aux_string, 0x1000);
+        afl->fsrv.nyx_runner, afl->fsrv.nyx_aux_string,
+        afl->fsrv.nyx_aux_string_len);
 
     ck_write(fd, afl->fsrv.nyx_aux_string, nyx_aux_string_len, fn_log);
     close(fd);

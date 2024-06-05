@@ -5,7 +5,7 @@
    Written by Andrea Fioraldi <andreafioraldi@gmail.com>
 
    Copyright 2015, 2016 Google Inc. All rights reserved.
-   Copyright 2019-2022 AFLplusplus Project. All rights reserved.
+   Copyright 2019-2024 AFLplusplus Project. All rights reserved.
 
    Licensed under the Apache License, Version 2.0 (the "License");
    you may not use this file except in compliance with the License.
@@ -90,7 +90,7 @@ class CmpLogInstructions : public ModulePass {
 #if LLVM_MAJOR >= 11                                /* use new pass manager */
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
 #else
-  bool      runOnModule(Module &M) override;
+  bool runOnModule(Module &M) override;
 
   #if LLVM_VERSION_MAJOR >= 4
   StringRef getPassName() const override {
@@ -156,32 +156,34 @@ Iterator Unique(Iterator first, Iterator last) {
 bool CmpLogInstructions::hookInstrs(Module &M) {
 
   std::vector<Instruction *> icomps;
-  LLVMContext &              C = M.getContext();
+  LLVMContext               &C = M.getContext();
 
-  Type *       VoidTy = Type::getVoidTy(C);
+  Type        *VoidTy = Type::getVoidTy(C);
   IntegerType *Int8Ty = IntegerType::getInt8Ty(C);
   IntegerType *Int16Ty = IntegerType::getInt16Ty(C);
   IntegerType *Int32Ty = IntegerType::getInt32Ty(C);
   IntegerType *Int64Ty = IntegerType::getInt64Ty(C);
   IntegerType *Int128Ty = IntegerType::getInt128Ty(C);
 
-#if LLVM_VERSION_MAJOR >= 9
-  FunctionCallee
-#else
-  Constant *
-#endif
-      c1 = M.getOrInsertFunction("__cmplog_ins_hook1", VoidTy, Int8Ty, Int8Ty,
-                                 Int8Ty
-#if LLVM_VERSION_MAJOR < 5
-                                 ,
-                                 NULL
-#endif
-      );
-#if LLVM_VERSION_MAJOR >= 9
-  FunctionCallee cmplogHookIns1 = c1;
-#else
-  Function *cmplogHookIns1 = cast<Function>(c1);
-#endif
+  /*
+  #if LLVM_VERSION_MAJOR >= 9
+    FunctionCallee
+  #else
+    Constant *
+  #endif
+        c1 = M.getOrInsertFunction("__cmplog_ins_hook1", VoidTy, Int8Ty, Int8Ty,
+                                   Int8Ty
+  #if LLVM_VERSION_MAJOR < 5
+                                   ,
+                                   NULL
+  #endif
+        );
+  #if LLVM_VERSION_MAJOR >= 9
+    FunctionCallee cmplogHookIns1 = c1;
+  #else
+    Function *cmplogHookIns1 = cast<Function>(c1);
+  #endif
+  */
 
 #if LLVM_VERSION_MAJOR >= 9
   FunctionCallee
@@ -338,7 +340,7 @@ bool CmpLogInstructions::hookInstrs(Module &M) {
       IntegerType *intTyOp1 = NULL;
       unsigned     max_size = 0, cast_size = 0;
       unsigned     attr = 0, vector_cnt = 0, is_fp = 0;
-      CmpInst *    cmpInst = dyn_cast<CmpInst>(selectcmpInst);
+      CmpInst     *cmpInst = dyn_cast<CmpInst>(selectcmpInst);
 
       if (!cmpInst) { continue; }
 
@@ -619,7 +621,7 @@ bool CmpLogInstructions::hookInstrs(Module &M) {
           switch (cast_size) {
 
             case 8:
-              IRB.CreateCall(cmplogHookIns1, args);
+              // IRB.CreateCall(cmplogHookIns1, args);
               break;
             case 16:
               IRB.CreateCall(cmplogHookIns2, args);
@@ -666,7 +668,7 @@ bool CmpLogInstructions::hookInstrs(Module &M) {
 }
 
 #if LLVM_MAJOR >= 11                                /* use new pass manager */
-PreservedAnalyses CmpLogInstructions::run(Module &               M,
+PreservedAnalyses CmpLogInstructions::run(Module                &M,
                                           ModuleAnalysisManager &MAM) {
 
 #else

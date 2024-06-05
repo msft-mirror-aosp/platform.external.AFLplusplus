@@ -168,10 +168,11 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
 
   DenseMap<Value *, std::string *> valueMap;
   std::vector<CallInst *>          calls;
-  LLVMContext &                    C = M.getContext();
-  IntegerType *                    Int8Ty = IntegerType::getInt8Ty(C);
-  IntegerType *                    Int32Ty = IntegerType::getInt32Ty(C);
-  IntegerType *                    Int64Ty = IntegerType::getInt64Ty(C);
+  LLVMContext                     &C = M.getContext();
+  IntegerType                     *Int1Ty = IntegerType::getInt1Ty(C);
+  IntegerType                     *Int8Ty = IntegerType::getInt8Ty(C);
+  IntegerType                     *Int32Ty = IntegerType::getInt32Ty(C);
+  IntegerType                     *Int64Ty = IntegerType::getInt64Ty(C);
 
 #if LLVM_VERSION_MAJOR >= 9
   FunctionCallee tolowerFn;
@@ -227,9 +228,9 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
           isStrcmp &=
               (!FuncName.compare("strcmp") || !FuncName.compare("xmlStrcmp") ||
                !FuncName.compare("xmlStrEqual") ||
-               !FuncName.compare("g_strcmp0") ||
                !FuncName.compare("curl_strequal") ||
-               !FuncName.compare("strcsequal"));
+               !FuncName.compare("strcsequal") ||
+               !FuncName.compare("g_strcmp0"));
           isMemcmp &=
               (!FuncName.compare("memcmp") || !FuncName.compare("bcmp") ||
                !FuncName.compare("CRYPTO_memcmp") ||
@@ -237,8 +238,8 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
                !FuncName.compare("memcmp_const_time") ||
                !FuncName.compare("memcmpct"));
           isStrncmp &= (!FuncName.compare("strncmp") ||
-                        !FuncName.compare("xmlStrncmp") ||
-                        !FuncName.compare("curl_strnequal"));
+                        !FuncName.compare("curl_strnequal") ||
+                        !FuncName.compare("xmlStrncmp"));
           isStrcasecmp &= (!FuncName.compare("strcasecmp") ||
                            !FuncName.compare("stricmp") ||
                            !FuncName.compare("ap_cstr_casecmp") ||
@@ -270,28 +271,30 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
           isStrcmp &=
               FT->getNumParams() == 2 && FT->getReturnType()->isIntegerTy(32) &&
               FT->getParamType(0) == FT->getParamType(1) &&
-              FT->getParamType(0) == IntegerType::getInt8PtrTy(M.getContext());
+              FT->getParamType(0) ==
+                  IntegerType::getInt8Ty(M.getContext())->getPointerTo(0);
           isStrcasecmp &=
               FT->getNumParams() == 2 && FT->getReturnType()->isIntegerTy(32) &&
               FT->getParamType(0) == FT->getParamType(1) &&
-              FT->getParamType(0) == IntegerType::getInt8PtrTy(M.getContext());
+              FT->getParamType(0) ==
+                  IntegerType::getInt8Ty(M.getContext())->getPointerTo(0);
           isMemcmp &= FT->getNumParams() == 3 &&
                       FT->getReturnType()->isIntegerTy(32) &&
                       FT->getParamType(0)->isPointerTy() &&
                       FT->getParamType(1)->isPointerTy() &&
                       FT->getParamType(2)->isIntegerTy();
-          isStrncmp &= FT->getNumParams() == 3 &&
-                       FT->getReturnType()->isIntegerTy(32) &&
-                       FT->getParamType(0) == FT->getParamType(1) &&
-                       FT->getParamType(0) ==
-                           IntegerType::getInt8PtrTy(M.getContext()) &&
-                       FT->getParamType(2)->isIntegerTy();
-          isStrncasecmp &= FT->getNumParams() == 3 &&
-                           FT->getReturnType()->isIntegerTy(32) &&
-                           FT->getParamType(0) == FT->getParamType(1) &&
-                           FT->getParamType(0) ==
-                               IntegerType::getInt8PtrTy(M.getContext()) &&
-                           FT->getParamType(2)->isIntegerTy();
+          isStrncmp &=
+              FT->getNumParams() == 3 && FT->getReturnType()->isIntegerTy(32) &&
+              FT->getParamType(0) == FT->getParamType(1) &&
+              FT->getParamType(0) ==
+                  IntegerType::getInt8Ty(M.getContext())->getPointerTo(0) &&
+              FT->getParamType(2)->isIntegerTy();
+          isStrncasecmp &=
+              FT->getNumParams() == 3 && FT->getReturnType()->isIntegerTy(32) &&
+              FT->getParamType(0) == FT->getParamType(1) &&
+              FT->getParamType(0) ==
+                  IntegerType::getInt8Ty(M.getContext())->getPointerTo(0) &&
+              FT->getParamType(2)->isIntegerTy();
 
           if (!isStrcmp && !isMemcmp && !isStrncmp && !isStrcasecmp &&
               !isStrncasecmp && !isIntMemcpy)
@@ -409,7 +412,7 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
 
             /* check if third operand is a constant integer
              * strlen("constStr") and sizeof() are treated as constant */
-            Value *      op2 = callInst->getArgOperand(2);
+            Value       *op2 = callInst->getArgOperand(2);
             ConstantInt *ilen = dyn_cast<ConstantInt>(op2);
             if (ilen) {
 
@@ -449,7 +452,7 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
           *Str2P = callInst->getArgOperand(1);
     StringRef   Str1, Str2, ConstStr;
     std::string TmpConstStr;
-    Value *     VarStr;
+    Value      *VarStr;
     bool        HasStr1 = getConstantStringInfo(Str1P, Str1);
     bool        HasStr2 = getConstantStringInfo(Str2P, Str2);
     uint64_t    constStrLen, unrollLen, constSizedLen = 0;
@@ -457,7 +460,8 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
     bool        isSizedcmp = false;
     bool        isCaseInsensitive = false;
     bool        needs_null = false;
-    Function *  Callee = callInst->getCalledFunction();
+    bool        success_is_one = false;
+    Function   *Callee = callInst->getCalledFunction();
 
     if (Callee) {
 
@@ -502,6 +506,12 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
           !Callee->getName().compare("Curl_strncasecompare") ||
           !Callee->getName().compare("g_strncasecmp"))
         isCaseInsensitive = true;
+
+      if (!Callee->getName().compare("xmlStrEqual") ||
+          !Callee->getName().compare("curl_strequal") ||
+          !Callee->getName().compare("strcsequal") ||
+          !Callee->getName().compare("curl_strnequal"))
+        success_is_one = true;
 
     }
 
@@ -616,13 +626,13 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
 
     for (uint64_t i = 0; i < unrollLen; i++) {
 
-      BasicBlock *  cur_cmp_bb = next_cmp_bb, *cur_lenchk_bb = next_lenchk_bb;
+      BasicBlock   *cur_cmp_bb = next_cmp_bb, *cur_lenchk_bb = next_lenchk_bb;
       unsigned char c;
 
       if (cur_lenchk_bb) {
 
         IRBuilder<> cur_lenchk_IRB(&*(cur_lenchk_bb->getFirstInsertionPt()));
-        Value *     icmp = cur_lenchk_IRB.CreateICmpEQ(
+        Value      *icmp = cur_lenchk_IRB.CreateICmpEQ(
             sizedValue, ConstantInt::get(sizedValue->getType(), i));
         cur_lenchk_IRB.CreateCondBr(icmp, end_bb, cur_cmp_bb);
         cur_lenchk_bb->getTerminator()->eraseFromParent();
@@ -667,6 +677,14 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
       else
         isub = cur_cmp_IRB.CreateSub(load, ConstantInt::get(Int8Ty, c));
 
+      if (success_is_one && i == unrollLen - 1) {
+
+        Value *isubsub = cur_cmp_IRB.CreateTrunc(isub, Int1Ty);
+        isub = cur_cmp_IRB.CreateSelect(isubsub, ConstantInt::get(Int8Ty, 0),
+                                        ConstantInt::get(Int8Ty, 1));
+
+      }
+
       Value *sext = cur_cmp_IRB.CreateSExt(isub, Int32Ty);
       PN->addIncoming(sext, cur_cmp_bb);
 
@@ -708,7 +726,11 @@ bool CompareTransform::transformCmps(Module &M, const bool processStrcmp,
     /* since the call is the first instruction of the bb it is safe to
      * replace it with a phi instruction */
     BasicBlock::iterator ii(callInst);
+#if LLVM_MAJOR >= 16
+    ReplaceInstWithInst(callInst->getParent(), ii, PN);
+#else
     ReplaceInstWithInst(callInst->getParent()->getInstList(), ii, PN);
+#endif
 
   }
 
